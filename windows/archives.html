@@ -99,6 +99,32 @@
       renderAvailableTasks();
       renderCurrentTask();
       renderCompletedTasks();
+      
+      const pendingHighlight = await ipcRenderer.invoke('get-pending-highlight');
+      if (pendingHighlight) {
+        highlightAndOpenArtifact(pendingHighlight);
+      }
+      
+      ipcRenderer.on('highlight-artifact', (_, artifactId) => {
+        highlightAndOpenArtifact(artifactId);
+      });
+    }
+
+    function highlightAndOpenArtifact(artifactId) {
+      const idx = gameState.completedTasks.findIndex(t => t.artifact.id === artifactId);
+      if (idx >= 0) {
+        switchTab('completed');
+        currentFilters = { era: '', material: '', quality: '', tool: '' };
+        document.getElementById('filterEra').value = '';
+        document.getElementById('filterMaterial').value = '';
+        document.getElementById('filterQuality').value = '';
+        document.getElementById('filterTool').value = '';
+        renderCompletedTasks();
+        
+        setTimeout(() => {
+          viewDetailedReview(idx);
+        }, 300);
+      }
     }
 
     function initFilterOptions() {
@@ -381,6 +407,7 @@
       const tb = task.toolBonus || {};
       const fs = task.forceStats || {};
       const sr = task.stepRatings || {};
+      const logs = task.restorationLog || [];
       
       let forceGrade = '一般';
       if (fs.totalActions > 0) {
@@ -388,6 +415,8 @@
         if (perfectRate >= 0.7) forceGrade = '优秀';
         else if (perfectRate >= 0.4) forceGrade = '良好';
       }
+      
+      const timelineEvents = generateTimeline(logs, task);
       
       let html = `
         <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📊 修复复盘 - ${task.title}</h2>
@@ -406,7 +435,26 @@
         </div>
         
         <div style="margin-bottom: 20px;">
-          <h4 style="color: #d4af37; margin-bottom: 10px;">📈 阶段评分</h4>
+          <h4 style="color: #d4af37; margin-bottom: 10px;">� 关键操作时间线</h4>
+          <div style="max-height: 250px; overflow-y: auto; padding-right: 10px;">
+            ${timelineEvents.map((event, i) => `
+              <div style="display: flex; gap: 12px; margin-bottom: 10px; position: relative;">
+                <div style="width: 12px; height: 12px; border-radius: 50%; background: ${event.color}; flex-shrink: 0; margin-top: 4px;"></div>
+                <div style="flex: 1;">
+                  <div style="font-size: 11px; color: #888; margin-bottom: 2px;">${event.time}</div>
+                  <div style="font-size: 12px;">
+                    <span style="color: #d4af37;">[${event.step}]</span>
+                    <span style="color: ${event.category === '⚠️ 突发' ? '#f44336' : event.color};">${event.icon} ${event.text}</span>
+                  </div>
+                </div>
+              </div>
+              ${i < timelineEvents.length - 1 ? '<div style="position: absolute; left: 5px; top: 20px; bottom: -10px; width: 2px; background: #444;"></div>' : ''}
+            `).join('')}
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+          <h4 style="color: #d4af37; margin-bottom: 10px;">�� 阶段评分</h4>
           ${Object.keys(sr).length > 0 ? Object.keys(sr).map(stepId => {
             const r = sr[stepId];
             if (!r || r.maxScore === 0) return '';
@@ -471,12 +519,94 @@
         </div>
         ` : ''}
         
+        ${task.labReports && task.labReports.length > 0 ? `
+        <div style="margin-bottom: 20px; padding: 10px; background: rgba(100,200,255,0.1); border-radius: 6px;">
+          <p style="color: #64c8ff; margin-bottom: 5px;"><strong>📄 检测报告</strong></p>
+          <p style="font-size: 12px;">
+            ${task.labReports.map(r => r.type).join('、')}
+          </p>
+        </div>
+        ` : ''}
+        
         <div style="text-align: center;">
           <button class="btn" onclick="closeModal()">关闭</button>
         </div>
       `;
       
       showModal(html);
+    }
+
+    function generateTimeline(logs, task) {
+      const events = [];
+      const categoryIcons = {
+        '系统': '📋',
+        '观察': '👁️',
+        '清洁': '🧹',
+        '拼合': '🧩',
+        '补配': '🔨',
+        '上色': '🎨',
+        '封护': '🛡️',
+        '材料': '📦',
+        '⚠️ 突发': '⚠️',
+        '学徒协助': '👨‍🔧'
+      };
+      const categoryColors = {
+        '系统': '#888',
+        '观察': '#ffd700',
+        '清洁': '#4caf50',
+        '拼合': '#2196f3',
+        '补配': '#ff9800',
+        '上色': '#9c27b0',
+        '封护': '#607d8b',
+        '材料': '#795548',
+        '⚠️ 突发': '#f44336',
+        '学徒协助': '#8bc34a'
+      };
+      
+      logs.forEach(log => {
+        const text = log.text || '';
+        if (text.includes('开始修复任务') || text.includes('发现破损点') || 
+            text.includes('切换至') || text.includes('污渍已清洁') ||
+            text.includes('碎片已放置') || text.includes('补配完成') ||
+            text.includes('上色完成') || text.includes('封护完成') ||
+            text.includes('突发事件') || text.includes('成功避免') ||
+            text.includes('协助识别') || text.includes('使用')) {
+          events.push({
+            time: log.time,
+            step: log.step,
+            category: log.category,
+            icon: categoryIcons[log.category] || '📌',
+            color: categoryColors[log.category] || '#e8d5b7',
+            text: text
+          });
+        }
+      });
+      
+      if (task.labReports && task.labReports.length > 0) {
+        task.labReports.forEach(report => {
+          events.push({
+            time: new Date(report.timestamp || Date.now()).toLocaleTimeString(),
+            step: '检测',
+            category: '系统',
+            icon: '📄',
+            color: '#64c8ff',
+            text: `完成${report.type}`
+          });
+        });
+      }
+      
+      if (events.length === 0) {
+        events.push({
+          time: '--:--:--',
+          step: '记录',
+          category: '系统',
+          icon: '📋',
+          color: '#888',
+          text: '暂无详细操作记录'
+        });
+      }
+      
+      return events.slice(0, 20);
     }
 
     function viewRestorationLog(idx) {

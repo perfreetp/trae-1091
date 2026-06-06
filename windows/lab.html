@@ -190,37 +190,408 @@
 
     function generateTestReport(type) {
       const art = selectedArtifact;
+      const mat = art.material;
       let content = '';
       let typeName = '';
 
       switch (type) {
         case 'dating':
           typeName = '年代检测报告';
-          content = `检测物品：${art.name}
-推定年代：${art.era}
-距今时间：${getEraYears(art.era)}
-检测方法：碳14测年法 / 地层学分析
-可信度：95%`;
+          content = generateDatingReport(art);
           break;
         case 'material':
           typeName = '材质分析报告';
-          content = `检测物品：${art.name}
-主要材质：${art.material}
-成分分析：${getMaterialComposition(art.material)}
-硬度：${getMaterialHardness(art.material)}
-保存状态：${getCondition(art)}`;
+          content = generateMaterialReport(art, mat);
           break;
         case 'xray':
           typeName = 'X光扫描报告';
-          content = `检测物品：${art.name}
-内部结构：${getInternalStructure(art)}
-隐藏破损：${getHiddenDamage(art)}
-修复痕迹：${getRepairTraces(art)}
-建议：${getRecommendation(art)}`;
+          content = generateXrayReport(art, mat);
           break;
       }
 
       return { type: typeName, content, artifactId: art.id };
+    }
+
+    function generateDatingReport(art) {
+      const mat = art.material;
+      let methodNote = '';
+      
+      if (['青铜', '铜', '铁器'].includes(mat)) {
+        methodNote = '金属器采用金相分析 + 铭文断代法';
+      } else if (['瓷器', '陶器'].includes(mat)) {
+        methodNote = '陶瓷器采用热释光测年法 + 胎釉比对';
+      } else if (['绢本设色', '纸本', '帛画'].includes(mat)) {
+        methodNote = '书画采用碳14测年法 + 印章/落款比对';
+      } else if (['和田玉', '玉石'].includes(mat)) {
+        methodNote = '玉器采用器型学 + 工艺痕迹分析';
+      } else if (['漆器'].includes(mat)) {
+        methodNote = '漆器采用漆膜碳14测年 + 木胎年轮分析';
+      } else {
+        methodNote = '综合采用碳14测年法 / 地层学分析';
+      }
+      
+      return `检测物品：${art.name}
+文物编号：${art.id.toUpperCase()}
+推定年代：${art.era}
+距今时间：${getEraYears(art.era)}
+检测方法：${methodNote}
+可信度：${90 + Math.floor(Math.random() * 10)}%
+
+年代佐证：
+• 器型风格符合${art.era}典型特征
+• 工艺痕迹与同期器物一致
+• ${mat}材质老化程度与年代匹配
+
+⚠️ 年代相关病害风险：
+${getAgeRelatedDisease(art)}`;
+    }
+
+    function generateMaterialReport(art, mat) {
+      const diseaseInfo = getMaterialDiseaseProfile(mat);
+      
+      return `检测物品：${art.name}
+主要材质：${mat}
+成分分析：${getMaterialComposition(mat)}
+硬度：${getMaterialHardness(mat)}
+密度：${getMaterialDensity(mat)}
+
+材质特性分析：
+${diseaseInfo.characteristics}
+
+⚠️ 主要病害风险：
+${diseaseInfo.risks.map(r => '• ' + r).join('\n')}
+
+🔧 修复建议：
+${diseaseInfo.suggestions.map(s => '• ' + s).join('\n')}
+
+📋 保存状态评估：
+当前状态：${getCondition(art)}
+建议修复优先级：${diseaseInfo.priority}`;
+    }
+
+    function generateXrayReport(art, mat) {
+      const xrayInfo = getXrayAnalysis(mat, art);
+      
+      return `检测物品：${art.name}
+扫描设备：工业CT + 数字化X光机
+扫描分辨率：0.1mm
+穿透深度：${getPenetrationDepth(mat)}
+
+📷 内部结构分析：
+${xrayInfo.structure}
+
+🔍 发现的内部病害：
+${xrayInfo.damages.map(d => '• ' + d).join('\n')}
+
+⚙️ 铸造/制作工艺痕迹：
+${xrayInfo.craftTraces}
+
+⚠️ 内部风险评估：
+风险等级：${xrayInfo.riskLevel}
+需重点关注：${xrayInfo.focusPoints}
+
+🔧 针对性修复建议：
+${xrayInfo.recommendations.map(r => '• ' + r).join('\n')}`;
+    }
+
+    function getMaterialDiseaseProfile(material) {
+      const profiles = {
+        '青铜': {
+          characteristics: '青铜合金在埋藏或陈列过程中易发生电化学腐蚀，形成粉状锈（碱式氯化铜），这种病害具有传染性，会持续侵蚀本体。',
+          risks: [
+            '粉状锈（有害锈）- 传染性强，需隔离处理',
+            '表面锈蚀层增厚 - 覆盖纹饰和铭文',
+            '铭文磨损与锈蚀覆盖 - 影响文物价值',
+            '锡析出 - 表面产生灰白色斑点',
+            '晶间腐蚀 - 内部结构劣化，强度下降'
+          ],
+          suggestions: [
+            '先做脱盐处理，去除氯离子',
+            '使用倍半碳酸钠溶液浸泡除锈',
+            '铭文区域采用机械法精细除锈',
+            '除锈后立即做封护处理，防止二次锈蚀',
+            '建议每年做一次锈蚀状态检查'
+          ],
+          priority: '高 - 粉状锈需紧急处理'
+        },
+        '瓷器': {
+          characteristics: '瓷器胎釉结合部易受温湿度变化影响产生冲线，釉面受酸碱侵蚀会失光，冲线内渗入污染物会形成黑线。',
+          risks: [
+            '釉面冲线（开片延伸）- 温湿度变化会加剧',
+            '胎釉结合部分离 - 有脱釉风险',
+            '冲线内污染物渗透 - 形成黑线难以清除',
+            '釉面酸碱侵蚀失光 - 影响外观',
+            '胎体裂隙 - 影响结构强度'
+          ],
+          suggestions: [
+            '冲线清洁使用纸浆法包裹脱盐',
+            '避免使用强酸强碱清洁剂',
+            '冲线修补使用环氧树酯加矿物颜料',
+            '釉面失光可使用纳米二氧化硅增亮',
+            '陈列环境控制温湿度波动在±5%'
+          ],
+          priority: '中 - 冲线需防止扩大'
+        },
+        '绢本设色': {
+          characteristics: '蚕丝蛋白纤维易受光照、湿度、微生物影响发生降解，颜料层会出现粉化、脱落，托裱层老化会影响画幅平整。',
+          risks: [
+            '纤维断裂与脆化 - 光照和干燥是主因',
+            '颜料粉化脱落 - 胶料老化失效',
+            '托裱层老化脱层 - 画幅起皱不平',
+            '霉斑与虫害 - 高湿环境易发生',
+            '水渍与污渍渗透 - 污染纤维'
+          ],
+          suggestions: [
+            '修复前先做除尘和霉斑处理',
+            '颜料加固使用2-3%明胶溶液',
+            '断裂处采用隐补法，使用同类绢料',
+            '重裱时使用传统浆糊，避免化学粘合剂',
+            '陈列时照度控制在50lux以下'
+          ],
+          priority: '高 - 纤维脆化不可逆'
+        },
+        '纸本': {
+          characteristics: '纸张纤维素易水解和氧化，酸性环境会加速老化，出现发黄、变脆、虫蛀等问题。',
+          risks: [
+            '纸张酸化发黄 - pH值低于5需脱酸',
+            '纤维素降解脆化 - 机械强度下降',
+            '虫蛀与鼠噬 - 有机质易受害',
+            '水渍与污渍 - 洇散污染画面',
+            '折痕断裂 - 反复折叠加速损伤'
+          ],
+          suggestions: [
+            '先做脱酸处理，提高纸张pH值至7-8',
+            '断裂处采用纸浆补洞或镶补法',
+            '污渍使用酶解法或漂白粉（慎用）',
+            '托裱使用高质量宣纸和传统浆糊',
+            '保存环境相对湿度45-55%'
+          ],
+          priority: '中高 - 酸化需及时处理'
+        },
+        '陶器': {
+          characteristics: '陶器孔隙率高，易吸潮和可溶性盐，反复干湿循环会导致表面剥落，彩绘层易脱落。',
+          risks: [
+            '可溶盐结晶破坏 - 孔隙内盐析导致表面剥落',
+            '彩绘层脱落 - 胶结材料老化',
+            '胎体裂隙 - 烧制缺陷或外力导致',
+            '表面污染物附着 - 孔隙易积灰',
+            '修复材料劣化 - 旧修复材料失效'
+          ],
+          suggestions: [
+            '先做脱盐处理，去除可溶盐',
+            '彩绘层加固使用丙烯酸乳液稀释液',
+            '裂隙修补使用陶粉加粘合剂',
+            '避免直接水洗，采用干洗法',
+            '保存环境避免干湿交替'
+          ],
+          priority: '中 - 可溶盐需定期监测'
+        },
+        '漆器': {
+          characteristics: '漆膜随老化会变脆，木胎易吸潮变形，漆层与胎骨结合力下降会出现起翘、脱落。',
+          risks: [
+            '漆层起翘脱落 - 胎漆结合力下降',
+            '木胎变形开裂 - 温湿度变化导致',
+            '漆层失光老化 - 紫外线照射加速',
+            '彩绘层粉化 - 颜料与漆基分离',
+            '胎骨腐朽 - 高湿环境易发生'
+          ],
+          suggestions: [
+            '漆层回软使用乙醇-水溶液逐步加湿',
+            '起翘漆片用稀释环氧树脂粘回',
+            '木胎变形采用缓慢干燥法纠正',
+            '封护使用天然蜡或丙烯酸清漆',
+            '避免阳光直射，使用防紫外线玻璃'
+          ],
+          priority: '中 - 漆层起翘需及时加固'
+        },
+        '和田玉': {
+          characteristics: '玉石硬度高但脆性大，受撞击易产生绺裂，绺裂内含铁氧化物会形成沁色，酸性环境会腐蚀表面。',
+          risks: [
+            '绺裂延伸扩大 - 外力或温变导致',
+            '绺裂内污染物渗入 - 形成次生色',
+            '表面酸碱腐蚀 - 光泽受损',
+            '崩口与缺损 - 撞击导致',
+            '光泽度下降 - 长期摩挲或清洗不当'
+          ],
+          suggestions: [
+            '绺裂清洁使用超声波清洗（慎用）',
+            '避免使用钻石膏等研磨材料',
+            '缺损补配使用树脂加矿物颜料',
+            '表面封护使用纳米硅基材料',
+            '陈列避免与硬物接触碰撞'
+          ],
+          priority: '低 - 玉石稳定性较好'
+        },
+        '铜': {
+          characteristics: '纯铜耐腐蚀性比青铜差，易生成铜绿（碱式碳酸铜），在含氯环境中会产生有害锈。',
+          risks: [
+            '铜绿层增厚 - 覆盖纹饰',
+            '有害锈（粉状锈）- 含氯环境诱发',
+            '基体腐蚀坑洞 - 深层腐蚀',
+            '焊接点腐蚀 - 不同金属接触腐蚀',
+            '表面变色 - 氧化层不均'
+          ],
+          suggestions: [
+            '除锈采用机械法结合化学法',
+            '有害锈区域做局部封护',
+            '腐蚀坑洞使用铜粉加树脂填补',
+            '封护使用BTA缓蚀剂加丙烯酸清漆',
+            '控制环境相对湿度低于45%'
+          ],
+          priority: '中高 - 需监测有害锈发展'
+        }
+      };
+      
+      return profiles[material] || {
+        characteristics: '该材质需进一步分析其老化特性。',
+        risks: ['表面污渍与附着物', '结构裂隙', '材质老化劣化'],
+        suggestions: ['先做表面清洁', '评估结构稳定性', '根据具体情况制定修复方案'],
+        priority: '中 - 常规修复流程'
+      };
+    }
+
+    function getXrayAnalysis(material, art) {
+      const analyses = {
+        '青铜': {
+          structure: '典型青铜范铸结构，可见范线痕迹。器壁厚度不均，显示手工铸造特征。部分区域可见缩松和气孔。',
+          damages: [
+            '器壁内发现3处显微裂隙，长度0.5-2mm',
+            '表面锈蚀层已渗透至基体下约0.3mm',
+            '足部发现范铸缺陷导致的内部空腔',
+            '纹饰根部有锈蚀膨胀产生的应力裂纹'
+          ],
+          craftTraces: '可见清晰的范缝痕迹，无后期焊接修补痕迹。铭文区域铸造成型，字迹清晰。',
+          riskLevel: '中等',
+          focusPoints: '锈蚀层下的基体腐蚀程度、足部空腔是否影响结构强度',
+          recommendations: [
+            '足部空腔建议做加固处理',
+            '显微裂隙需监测是否继续扩展',
+            '除锈时注意保护纹饰根部',
+            '建议做氯离子含量检测'
+          ]
+        },
+        '瓷器': {
+          structure: '胎质致密，釉层厚度均匀约0.2mm。胎釉结合部可见轻微裂隙。底足露胎处可见烧制痕迹。',
+          damages: [
+            '釉层下发现2条冲线，未穿透胎体',
+            '口沿处胎釉结合部分离约1cm',
+            '胎体内有1处烧制时产生的气泡',
+            '冲线内可见高密度污染物渗入'
+          ],
+          craftTraces: '拉坯成型痕迹明显，圈足修整规整。釉面可见烧制时的流动痕迹。',
+          riskLevel: '低-中等',
+          focusPoints: '冲线是否继续延伸、胎釉分离是否扩大',
+          recommendations: [
+            '冲线建议做加固处理防止延伸',
+            '胎釉分离处需进行粘固',
+            '冲线内污染物需仔细清理',
+            '避免骤冷骤热防止冲线扩大'
+          ]
+        },
+        '绢本设色': {
+          structure: '多层结构：画芯层-托纸层-覆背纸。纤维排列方向一致，厚度均匀。部分区域可见纤维交叉。',
+          damages: [
+            '画芯层发现3处纤维断裂，长度2-5mm',
+            '托纸层有2处剥离起翘',
+            '颜料层下可见纤维损伤痕迹',
+            '折痕处纤维有疲劳断裂迹象'
+          ],
+          craftTraces: '手工织造经纬线清晰，托裱采用传统浆糊。绘制层颜料颗粒分布均匀。',
+          riskLevel: '中等',
+          focusPoints: '纤维断裂处是否继续扩大、托纸剥离是否影响画芯',
+          recommendations: [
+            '断裂处建议做隐补加固',
+            '托纸剥离处需重新刷平粘牢',
+            '折痕处避免继续折叠',
+            '建议全色后再做覆背'
+          ]
+        },
+        '陶器': {
+          structure: '胎质孔隙率较高，颗粒大小不均。手制成型痕迹明显。器壁厚度差异较大。',
+          damages: [
+            '胎体内发现多处裂隙，部分已贯穿',
+            '彩绘层下可见胎体表面剥落',
+            '内部有可溶盐结晶的高密度影像',
+            '旧修复的粘合剂已出现老化裂隙'
+          ],
+          craftTraces: '泥条盘筑成型痕迹清晰，表面打磨不平整。烧制温度偏低，胎质较松。',
+          riskLevel: '中高',
+          focusPoints: '可溶盐含量、贯穿裂隙对结构的影响',
+          recommendations: [
+            '必须先做脱盐处理',
+            '贯穿裂隙需做加固粘接',
+            '旧修复材料建议更换',
+            '彩绘层需做加固处理'
+          ]
+        }
+      };
+      
+      return analyses[material] || {
+        structure: '内部结构基本完整，未见明显异常。',
+        damages: ['未发现严重内部损伤', '结构完整性良好'],
+        craftTraces: '制作工艺符合时代特征。',
+        riskLevel: '低',
+        focusPoints: '常规检查即可',
+        recommendations: ['按常规修复流程进行', '注意保存环境控制']
+      };
+    }
+
+    function getPenetrationDepth(material) {
+      const depths = {
+        '青铜': '约20mm',
+        '瓷器': '约30mm',
+        '陶器': '约25mm',
+        '和田玉': '约15mm',
+        '绢本设色': '约5mm（低功率）',
+        '纸本': '约3mm（低功率）',
+        '漆器': '约10mm',
+        '铜': '约18mm'
+      };
+      return depths[material] || '约15mm';
+    }
+
+    function getAgeRelatedDisease(art) {
+      const era = art.era;
+      const mat = art.material;
+      const diseases = [];
+      
+      if (['商代', '战国', '秦代', '汉代'].includes(era)) {
+        if (['青铜', '铜'].includes(mat)) {
+          diseases.push('• 高古青铜器需重点检测有害锈，埋藏环境氯离子含量高');
+        }
+        diseases.push('• 年代久远，材质自然老化程度较高');
+      }
+      
+      if (['唐代', '宋代'].includes(era)) {
+        if (mat === '瓷器') {
+          diseases.push('• 唐宋瓷器釉面老化明显，需注意胎釉结合部');
+        }
+      }
+      
+      if (['明代', '清代'].includes(era)) {
+        if (['绢本设色', '纸本'].includes(mat)) {
+          diseases.push('• 明清书画常见酸化和纤维老化问题');
+        }
+      }
+      
+      if (diseases.length === 0) {
+        diseases.push('• 需结合材质进一步评估年代相关病害');
+      }
+      
+      return diseases.join('\n');
+    }
+
+    function getMaterialDensity(material) {
+      const densities = {
+        '青铜': '约8.8 g/cm³',
+        '瓷器': '约2.4 g/cm³',
+        '和田玉': '约2.95 g/cm³',
+        '绢本设色': '约1.3 g/cm³',
+        '陶器': '约2.0 g/cm³',
+        '漆器': '约1.2 g/cm³',
+        '铜': '约8.9 g/cm³'
+      };
+      return densities[material] || '待检测';
     }
 
     function displayTestResult(report) {

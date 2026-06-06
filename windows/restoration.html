@@ -487,6 +487,28 @@
     function selectTool(toolId) {
       selectedTool = toolId;
       const stepId = RESTORATION_STEPS[currentStepIndex].id;
+      
+      if (stepId === 'observe') {
+        if (toolId === 'microscope' && !toolBonus.microscopeUsed) {
+          toolBonus.microscopeUsed = true;
+          addLog('观察', '切换至显微镜进行微观观察');
+        }
+        if (toolId === 'xray' && !toolBonus.xrayUsed) {
+          toolBonus.xrayUsed = true;
+          addLog('观察', '切换至X光透视进行内部检查');
+        }
+      }
+      
+      if (stepId === 'clean' && toolId === 'laser' && !toolBonus.laserUsed) {
+        toolBonus.laserUsed = true;
+        addLog('清洁', '使用激光清洗机进行精密清洁');
+      }
+      
+      if (stepId === 'protect' && toolId === 'uv' && !toolBonus.uvUsed) {
+        toolBonus.uvUsed = true;
+        addLog('封护', '使用UV固化灯加速固化');
+      }
+      
       renderToolbar(stepId);
       renderWorkArea(stepId);
       showNotification('已选择工具');
@@ -545,20 +567,34 @@
       
       let matToUse = selectedMaterial || cost.material;
       
+      let apprenticeSaving = 0;
+      if (assignedApprentice?.skills?.analysis) {
+        apprenticeSaving = assignedApprentice.skills.analysis * 0.02;
+      }
+      const savingMultiplier = Math.max(0.5, 1 - apprenticeSaving);
+      
       if (cost.alt && matToUse === cost.alt) {
         if (gameState.materials[cost.alt] > 0) {
-          const useAmount = Math.ceil(amountMultiplier);
+          const useAmount = Math.max(1, Math.ceil(amountMultiplier * savingMultiplier));
           const result = await ipcRenderer.invoke('use-material', cost.alt, useAmount);
           if (result.success) {
             gameState.materials = result.materials;
             usedMaterials[cost.alt] = (usedMaterials[cost.alt] || 0) + useAmount;
-            addLog('材料', `使用 ${getMaterialsInfo()[cost.alt]?.name} x${useAmount}`);
+            let logText = `使用 ${getMaterialsInfo()[cost.alt]?.name} x${useAmount}`;
+            if (apprenticeSaving > 0) {
+              logText += `（学徒分析技能节省耗材${Math.round(apprenticeSaving * 100)}%）`;
+              if (!stepRatings[step.id]) stepRatings[step.id] = { score: 0, maxScore: 20, details: [] };
+              if (!stepRatings[step.id].details.find(d => d.includes('学徒节省'))) {
+                stepRatings[step.id].details.push(`学徒${assignedApprentice.name}协助节省耗材（+${Math.round(apprenticeSaving * 100)}%效率）`);
+              }
+            }
+            addLog('材料', logText);
             return { success: true, bonus: true };
           }
         }
       }
       
-      const actualAmount = Math.ceil(cost.amount * amountMultiplier);
+      const actualAmount = Math.max(1, Math.ceil(cost.amount * amountMultiplier * savingMultiplier));
       if (gameState.materials[cost.material] < actualAmount) {
         showNotification(`材料不足：${getMaterialsInfo()[cost.material]?.name}，请前往材料柜购买！`, 'error');
         return { success: false };
@@ -568,7 +604,15 @@
       if (result.success) {
         gameState.materials = result.materials;
         usedMaterials[cost.material] = (usedMaterials[cost.material] || 0) + actualAmount;
-        addLog('材料', `使用 ${getMaterialsInfo()[cost.material]?.name} x${actualAmount}`);
+        let logText = `使用 ${getMaterialsInfo()[cost.material]?.name} x${actualAmount}`;
+        if (apprenticeSaving > 0) {
+          logText += `（学徒分析技能节省耗材${Math.round(apprenticeSaving * 100)}%）`;
+          if (!stepRatings[step.id]) stepRatings[step.id] = { score: 0, maxScore: 20, details: [] };
+          if (!stepRatings[step.id].details.find(d => d.includes('学徒节省'))) {
+            stepRatings[step.id].details.push(`学徒${assignedApprentice.name}协助节省耗材（+${Math.round(apprenticeSaving * 100)}%效率）`);
+          }
+        }
+        addLog('材料', logText);
         updateStatus();
         return { success: true };
       }
@@ -827,6 +871,16 @@
           observeDetails.push(spot.detailName);
         }
         
+        if (assignedApprentice?.skills?.analysis && spot.type !== 'normal' && Math.random() < assignedApprentice.skills.analysis * 0.15) {
+          msg += '（学徒协助发现！）';
+          logText += ` [学徒${assignedApprentice.name}协助识别]`;
+          if (!stepRatings['observe']) stepRatings['observe'] = { score: 0, maxScore: 20, details: [] };
+          if (!stepRatings['observe'].details.find(d => d.includes('学徒协助'))) {
+            stepRatings['observe'].details.push(`学徒${assignedApprentice.name}协助识别细节（+2分）`);
+            stepRatings['observe'].score = Math.min(20, stepRatings['observe'].score + 2);
+          }
+        }
+        
         showNotification(msg);
         addLog('观察', logText);
         renderWorkArea('observe');
@@ -973,10 +1027,32 @@
       
       const apprenticeBonus = assignedApprentice?.skills || {};
       let emergencyReduce = 0;
-      if (stepId === 'clean' && apprenticeBonus.cleaning) emergencyReduce = apprenticeBonus.cleaning * 0.1;
-      if (stepId === 'assemble' && apprenticeBonus.assembly) emergencyReduce = apprenticeBonus.assembly * 0.08;
+      let contributeDetail = '';
       
-      if (Math.random() < emergencyReduce) return;
+      if (stepId === 'clean' && apprenticeBonus.cleaning) {
+        emergencyReduce = apprenticeBonus.cleaning * 0.1;
+        contributeDetail = `${assignedApprentice.name}的清洁技能帮助降低风险`;
+      }
+      if (stepId === 'assemble' && apprenticeBonus.assembly) {
+        emergencyReduce = apprenticeBonus.assembly * 0.08;
+        contributeDetail = `${assignedApprentice.name}的拼接技能帮助提升精度`;
+      }
+      if (stepId === 'color' && apprenticeBonus.painting) {
+        emergencyReduce = apprenticeBonus.painting * 0.12;
+        contributeDetail = `${assignedApprentice.name}的上色技能帮助减少色差`;
+      }
+      
+      if (Math.random() < emergencyReduce) {
+        if (contributeDetail) {
+          addLog('学徒协助', contributeDetail + '，成功避免了一次突发事件');
+          if (!stepRatings[stepId]) stepRatings[stepId] = { score: 0, maxScore: 20, details: [] };
+          if (!stepRatings[stepId].details.find(d => d.includes('学徒协助'))) {
+            stepRatings[stepId].details.push(`学徒${assignedApprentice.name}协助避免突发事件（+3分）`);
+            stepRatings[stepId].score = Math.min(stepRatings[stepId].maxScore, (stepRatings[stepId].score || 0) + 3);
+          }
+        }
+        return;
+      }
       
       currentEmergency = emergencies[Math.floor(Math.random() * emergencies.length)];
       addLog('⚠️ 突发', currentEmergency.name + ' - ' + currentEmergency.desc);

@@ -210,6 +210,21 @@ ipcMain.handle('update-exhibition-rating', (_, rating) => {
   return { success: true, exhibition: gameState.exhibition };
 });
 
+let pendingHighlightArtifactId = null;
+ipcMain.handle('highlight-archive', (_, artifactId) => {
+  pendingHighlightArtifactId = artifactId;
+  if (archivesWindow && !archivesWindow.isDestroyed()) {
+    archivesWindow.webContents.send('highlight-artifact', artifactId);
+  }
+  return { success: true };
+});
+
+ipcMain.handle('get-pending-highlight', () => {
+  const id = pendingHighlightArtifactId;
+  pendingHighlightArtifactId = null;
+  return id;
+});
+
 function calculateExhibitionRating() {
   const items = gameState.exhibition.items;
   if (items.length === 0) return 0;
