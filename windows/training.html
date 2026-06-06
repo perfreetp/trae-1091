@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>学徒培训</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <h1>👨‍🎓 学徒培训</h1>
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-icon">💰</span>
+        <span class="status-value" id="budget">50,000</span>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">👥</span>
+        <span class="status-value" id="apprenticeCount">0</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-container">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('myApprentices')">👥 我的学徒</button>
+      <button class="tab" onclick="switchTab('recruit')">📋 招聘</button>
+      <button class="tab" onclick="switchTab('training')">📚 培训课程</button>
+    </div>
+
+    <div id="myApprenticesTab">
+      <div class="card">
+        <div class="card-title">👥 我的学徒</div>
+        <div id="myApprenticesList"></div>
+      </div>
+    </div>
+
+    <div id="recruitTab" style="display: none;">
+      <div class="card">
+        <div class="card-title">📋 可招聘学徒</div>
+        <p style="margin-bottom: 15px; color: #a08060;">招聘学徒来协助你的修复工作</p>
+        <div id="recruitList"></div>
+      </div>
+    </div>
+
+    <div id="trainingTab" style="display: none;">
+      <div class="card">
+        <div class="card-title">📚 培训课程</div>
+        <p style="margin-bottom: 15px; color: #a08060;">选择学徒进行技能培训</p>
+        <div class="grid-2">
+          <div>
+            <h4 style="color: #d4af37; margin-bottom: 10px;">选择学徒</h4>
+            <div id="trainingSelect" style="max-height: 400px; overflow-y: auto;"></div>
+          </div>
+          <div>
+            <h4 style="color: #d4af37; margin-bottom: 10px;">可用课程</h4>
+            <div id="courseList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="notificationContainer"></div>
+
+  <script src="../data/game-data.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
+    let gameState = null;
+    let selectedApprenticeForTraining = null;
+
+    const COURSES = [
+      { id: 'cleaning', name: '清洁技术', desc: '提升文物清洁技能', cost: 2000, icon: '🧹' },
+      { id: 'assembly', name: '拼接工艺', desc: '提升碎片拼接技能', cost: 2500, icon: '🧩' },
+      { id: 'analysis', name: '分析检测', desc: '提升检测分析能力', cost: 3000, icon: '🔬' },
+      { id: 'painting', name: '上色技巧', desc: '提升全色上色技能', cost: 2800, icon: '🎨' },
+      { id: 'restoration', name: '高级修复', desc: '综合修复技能提升', cost: 5000, icon: '🏆' }
+    ];
+
+    async function init() {
+      gameState = await getGameState();
+      updateStatus();
+      renderMyApprentices();
+      renderRecruitList();
+      renderTrainingSelect();
+      renderCourseList();
+    }
+
+    function updateStatus() {
+      document.getElementById('budget').textContent = gameState.budget.toLocaleString();
+      document.getElementById('apprenticeCount').textContent = gameState.apprentices.length;
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      
+      ['myApprentices', 'recruit', 'training'].forEach(t => {
+        document.getElementById(t + 'Tab').style.display = t === tabName ? 'block' : 'none';
+      });
+    }
+
+    function renderMyApprentices() {
+      const container = document.getElementById('myApprenticesList');
+      const apprentices = gameState.apprentices;
+      
+      if (apprentices.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 30px;">还没有学徒，去招聘页面看看吧！</p>';
+        return;
+      }
+
+      container.innerHTML = apprentices.map(app => `
+        <div class="apprentice-card">
+          <div class="apprentice-header">
+            <div style="display: flex; align-items: center; gap: 15px;">
+              <div style="font-size: 48px;">👨‍🔧</div>
+              <div>
+                <h3 class="apprentice-name">${app.name}</h3>
+                <div style="margin-top: 5px;">
+                  ${app.traits.map(t => `<span class="tag tag-era">${t}</span>`).join('')}
+                </div>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <p style="color: #d4af37;">月薪：💰 ${app.salary.toLocaleString()}</p>
+              <button class="btn btn-danger" style="padding: 5px 15px; font-size: 12px; margin-top: 5px;" onclick="fireApprentice('${app.id}')">解雇</button>
+            </div>
+          </div>
+          <div class="apprentice-skills" style="margin-top: 15px;">
+            <div class="skill-bar">
+              <div class="skill-name">清洁</div>
+              <div class="skill-level">
+                <div class="skill-fill" style="width: ${(app.skills.cleaning || 1) * 20}%"></div>
+              </div>
+              <div style="font-size: 11px; color: #a08060; margin-top: 2px;">Lv.${app.skills.cleaning || 1}</div>
+            </div>
+            <div class="skill-bar">
+              <div class="skill-name">拼接</div>
+              <div class="skill-level">
+                <div class="skill-fill" style="width: ${(app.skills.assembly || 1) * 20}%"></div>
+              </div>
+              <div style="font-size: 11px; color: #a08060; margin-top: 2px;">Lv.${app.skills.assembly || 1}</div>
+            </div>
+            <div class="skill-bar">
+              <div class="skill-name">分析</div>
+              <div class="skill-level">
+                <div class="skill-fill" style="width: ${(app.skills.analysis || 1) * 20}%"></div>
+              </div>
+              <div style="font-size: 11px; color: #a08060; margin-top: 2px;">Lv.${app.skills.analysis || 1}</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderRecruitList() {
+      const container = document.getElementById('recruitList');
+      const pool = getApprenticePool();
+      const hiredIds = gameState.apprentices.map(a => a.id);
+      
+      const available = pool.filter(a => !hiredIds.includes(a.id));
+      
+      if (available.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 30px;">暂无可招聘的学徒</p>';
+        return;
+      }
+
+      container.innerHTML = available.map(app => `
+        <div class="list-item" style="padding: 15px;">
+          <div style="display: flex; gap: 15px; flex: 1;">
+            <div style="font-size: 48px;">👨‍🔧</div>
+            <div style="flex: 1;">
+              <h4 style="color: #d4af37; margin-bottom: 5px;">${app.name}</h4>
+              <div style="margin-bottom: 8px;">
+                ${app.traits.map(t => `<span class="tag tag-era">${t}</span>`).join('')}
+              </div>
+              <div style="display: flex; gap: 15px; font-size: 12px;">
+                <span>清洁 Lv.${app.skills.cleaning}</span>
+                <span>拼接 Lv.${app.skills.assembly}</span>
+                <span>分析 Lv.${app.skills.analysis}</span>
+              </div>
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <p style="color: #d4af37; margin-bottom: 5px;">💰 ${app.salary.toLocaleString()}/月</p>
+            <button class="btn btn-primary" onclick="hireApprentice('${app.id}')">招聘</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function hireApprentice(id) {
+      const pool = getApprenticePool();
+      const apprentice = pool.find(a => a.id === id);
+      
+      if (apprentice) {
+        if (gameState.budget < apprentice.salary) {
+          showNotification('余额不足，无法支付首月工资！', 'error');
+          return;
+        }
+        
+        gameState.budget -= apprentice.salary;
+        await ipcRenderer.invoke('update-budget', -apprentice.salary);
+        await ipcRenderer.invoke('add-apprentice', { ...apprentice, hiredAt: Date.now() });
+        gameState.apprentices.push({ ...apprentice, hiredAt: Date.now() });
+        
+        updateStatus();
+        renderMyApprentices();
+        renderRecruitList();
+        renderTrainingSelect();
+        showNotification('成功招聘：' + apprentice.name);
+      }
+    }
+
+    async function fireApprentice(id) {
+      if (confirm('确定要解雇这名学徒吗？')) {
+        gameState.apprentices = gameState.apprentices.filter(a => a.id !== id);
+        await saveGameState(gameState);
+        updateStatus();
+        renderMyApprentices();
+        renderRecruitList();
+        renderTrainingSelect();
+        showNotification('已解雇学徒');
+      }
+    }
+
+    function renderTrainingSelect() {
+      const container = document.getElementById('trainingSelect');
+      const apprentices = gameState.apprentices;
+      
+      if (apprentices.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 30px;">还没有学徒</p>';
+        return;
+      }
+
+      container.innerHTML = apprentices.map(app => `
+        <div class="list-item ${selectedApprenticeForTraining === app.id ? 'selected' : ''}" 
+             style="cursor: pointer;"
+             onclick="selectForTraining('${app.id}')">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 32px;">👨‍🔧</span>
+            <div>
+              <div style="color: #d4af37;">${app.name}</div>
+              <div style="font-size: 11px; color: #a08060;">
+                清洁 Lv.${app.skills.cleaning} · 拼接 Lv.${app.skills.assembly} · 分析 Lv.${app.skills.analysis}
+              </div>
+            </div>
+          </div>
+          <span>▶</span>
+        </div>
+      `).join('');
+    }
+
+    function selectForTraining(id) {
+      selectedApprenticeForTraining = id;
+      renderTrainingSelect();
+      const app = gameState.apprentices.find(a => a.id === id);
+      showNotification('已选择：' + app.name + '，选择课程进行培训');
+    }
+
+    function renderCourseList() {
+      const container = document.getElementById('courseList');
+      container.innerHTML = COURSES.map(course => `
+        <div class="list-item" style="padding: 12px;">
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <span style="font-size: 32px;">${course.icon}</span>
+            <div>
+              <div style="color: #d4af37;">${course.name}</div>
+              <div style="font-size: 12px; color: #a08060;">${course.desc}</div>
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <p style="color: #d4af37; margin-bottom: 5px;">💰 ${course.cost.toLocaleString()}</p>
+            <button class="btn btn-primary" style="padding: 5px 15px; font-size: 12px;" onclick="trainSkill('${course.id}', ${course.cost})">培训</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function trainSkill(skillId, cost) {
+      if (!selectedApprenticeForTraining) {
+        showNotification('请先选择要培训的学徒！', 'error');
+        return;
+      }
+
+      const skillMap = {
+        cleaning: 'cleaning',
+        assembly: 'assembly',
+        analysis: 'analysis',
+        painting: 'cleaning',
+        restoration: 'assembly'
+      };
+
+      const result = await ipcRenderer.invoke('train-apprentice', selectedApprenticeForTraining, skillMap[skillId] || skillId, cost);
+      
+      if (result.success) {
+        gameState = result;
+        updateStatus();
+        renderMyApprentices();
+        renderTrainingSelect();
+        showNotification('培训完成！技能已提升');
+      } else {
+        showNotification('余额不足！', 'error');
+      }
+    }
+
+    function showNotification(message, type = 'success') {
+      const container = document.getElementById('notificationContainer');
+      const notif = document.createElement('div');
+      notif.className = 'notification' + (type === 'error' ? ' error' : '');
+      notif.textContent = message;
+      container.appendChild(notif);
+      setTimeout(() => notif.remove(), 3000);
+    }
+
+    init();
+    setInterval(async () => {
+      gameState = await getGameState();
+      updateStatus();
+    }, 2000);
+  </script>
+</body>
+</html>

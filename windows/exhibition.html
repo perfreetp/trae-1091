@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>展厅布置</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <h1>🖼️ 展厅布置</h1>
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-icon">⭐</span>
+        <span class="status-value" id="rating">0</span>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">👥</span>
+        <span class="status-value" id="visitors">0</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-container">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">
+          🏛️ 展厅布局
+          <span style="float: right; color: #d4af37;">展厅评级：<span class="stars" id="starRating">☆☆☆☆☆</span></span>
+        </div>
+        <p style="margin-bottom: 15px; color: #a08060;">点击展柜放置或移除展品</p>
+        <div class="exhibition-grid" id="showcases"></div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">📦 可展藏品</div>
+          <p style="margin-bottom: 10px; color: #a08060;">已修复的文物可以在这里展出</p>
+          <div id="collectionList" style="max-height: 250px; overflow-y: auto;"></div>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+          <div class="card-title">💬 观众反馈</div>
+          <div id="feedbackList" style="max-height: 200px; overflow-y: auto;"></div>
+          <div style="margin-top: 10px; text-align: center;">
+            <button class="btn" onclick="simulateVisitors()">👥 模拟观众参观</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <div class="card-title">📊 展厅统计</div>
+      <div class="grid-3">
+        <div class="item-card" style="text-align: center;">
+          <div style="font-size: 36px; margin-bottom: 5px;">🖼️</div>
+          <div class="item-name">展品数量</div>
+          <div class="item-meta" id="itemCount">0 件</div>
+        </div>
+        <div class="item-card" style="text-align: center;">
+          <div style="font-size: 36px; margin-bottom: 5px;">🌈</div>
+          <div class="item-name">年代多样性</div>
+          <div class="item-meta" id="eraCount">0 个</div>
+        </div>
+        <div class="item-card" style="text-align: center;">
+          <div style="font-size: 36px; margin-bottom: 5px;">⭐</div>
+          <div class="item-name">平均稀有度</div>
+          <div class="item-meta" id="avgRarity">0 ★</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="notificationContainer"></div>
+
+  <script src="../data/game-data.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
+    let gameState = null;
+    let selectedArtifact = null;
+    const SHOWCASE_POSITIONS = 8;
+
+    const FEEDBACK_TEMPLATES = [
+      { text: '这些文物太精美了！真是大开眼界！', rating: 5 },
+      { text: '青铜器的纹饰真漂亮，古人太厉害了！', rating: 5 },
+      { text: '希望能看到更多不同朝代的文物', rating: 4 },
+      { text: '展柜布置得很有艺术感', rating: 5 },
+      { text: '讲解员的介绍很专业', rating: 4 },
+      { text: '如果有更多互动体验就好了', rating: 3 },
+      { text: '灯光效果很棒，很有氛围感', rating: 5 },
+      { text: '种类有点单一，期待更多展品', rating: 3 },
+      { text: '不虚此行！强烈推荐！', rating: 5 },
+      { text: '带孩子来的，学到了很多知识', rating: 4 }
+    ];
+
+    async function init() {
+      gameState = await getGameState();
+      renderShowcases();
+      renderCollection();
+      renderFeedback();
+      updateStats();
+    }
+
+    function renderShowcases() {
+      const container = document.getElementById('showcases');
+      const items = gameState.exhibition.items;
+      
+      let html = '';
+      for (let i = 0; i < SHOWCASE_POSITIONS; i++) {
+        const exhibit = items.find(e => e.position === i);
+        if (exhibit) {
+          html += `
+            <div class="showcase occupied" onclick="removeExhibit(${i})">
+              <div class="showcase-icon">${exhibit.artifact.image}</div>
+              <div class="showcase-label">${exhibit.artifact.name}</div>
+              <div class="showcase-label">
+                <span class="tag tag-era" style="font-size: 10px;">${exhibit.artifact.era}</span>
+              </div>
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="showcase" onclick="placeToShowcase(${i})">
+              <div class="showcase-icon" style="opacity: 0.3;">📦</div>
+              <div class="showcase-label">展柜 ${i + 1}</div>
+              <div class="showcase-label">点击放置</div>
+            </div>
+          `;
+        }
+      }
+      container.innerHTML = html;
+
+      const rating = gameState.exhibition.rating || 0;
+      const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+      document.getElementById('starRating').textContent = stars;
+      document.getElementById('rating').textContent = rating;
+    }
+
+    function renderCollection() {
+      const container = document.getElementById('collectionList');
+      const collection = gameState.collection;
+      const exhibitedIds = gameState.exhibition.items.map(e => e.artifact.id);
+      
+      if (collection.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 20px;">暂无已修复的藏品</p>';
+        return;
+      }
+
+      const available = collection.filter(a => !exhibitedIds.includes(a.id));
+      
+      if (available.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 20px;">所有藏品已展出</p>';
+        return;
+      }
+
+      container.innerHTML = available.map(art => `
+        <div class="list-item ${selectedArtifact?.id === art.id ? 'selected' : ''}" 
+             style="cursor: pointer;"
+             onclick="selectArtifact('${art.id}')">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 28px;">${art.image}</span>
+            <div>
+              <div style="color: #d4af37;">${art.name}</div>
+              <div style="font-size: 11px;">
+                <span class="tag tag-era">${art.era}</span>
+                <span class="tag tag-difficulty">${'★'.repeat(art.rarity)}</span>
+              </div>
+            </div>
+          </div>
+          <span>▶</span>
+        </div>
+      `).join('');
+    }
+
+    function selectArtifact(id) {
+      selectedArtifact = gameState.collection.find(a => a.id === id);
+      renderCollection();
+      showNotification('已选择：' + selectedArtifact.name + '，点击展柜放置');
+    }
+
+    async function placeToShowcase(position) {
+      if (!selectedArtifact) {
+        showNotification('请先选择要展出的藏品！', 'error');
+        return;
+      }
+
+      const result = await ipcRenderer.invoke('exhibit-item', selectedArtifact, position);
+      if (result.success) {
+        gameState.exhibition = result.exhibition;
+        selectedArtifact = null;
+        renderShowcases();
+        renderCollection();
+        updateStats();
+        showNotification('展品已放置！');
+      } else {
+        showNotification(result.message || '放置失败', 'error');
+      }
+    }
+
+    async function removeExhibit(position) {
+      if (confirm('确定要移除此展品吗？')) {
+        const result = await ipcRenderer.invoke('remove-exhibit', position);
+        if (result.success) {
+          gameState.exhibition = result.exhibition;
+          renderShowcases();
+          renderCollection();
+          updateStats();
+          showNotification('展品已移除');
+        }
+      }
+    }
+
+    function renderFeedback() {
+      const container = document.getElementById('feedbackList');
+      const feedback = gameState.exhibition.visitorFeedback;
+      
+      if (feedback.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 20px;">暂无观众反馈</p>';
+        return;
+      }
+
+      container.innerHTML = feedback.slice(-10).reverse().map(f => `
+        <div class="feedback-item">
+          <div class="feedback-text">${f.text}</div>
+          <div class="feedback-rating">
+            <span class="stars">${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)}</span>
+            <span style="margin-left: 10px; color: #666; font-size: 11px;">${f.time}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function simulateVisitors() {
+      if (gameState.exhibition.items.length === 0) {
+        showNotification('展厅还没有展品！', 'error');
+        return;
+      }
+
+      const visitorCount = Math.floor(Math.random() * 20) + 5;
+      const feedbackCount = Math.floor(visitorCount * 0.3);
+      
+      for (let i = 0; i < feedbackCount; i++) {
+        const template = FEEDBACK_TEMPLATES[Math.floor(Math.random() * FEEDBACK_TEMPLATES.length)];
+        const feedback = {
+          text: template.text,
+          rating: template.rating + (Math.random() > 0.7 ? 1 : 0) - (Math.random() > 0.8 ? 1 : 0),
+          time: new Date().toLocaleTimeString()
+        };
+        feedback.rating = Math.max(1, Math.min(5, feedback.rating));
+        await ipcRenderer.invoke('add-feedback', feedback);
+        gameState.exhibition.visitorFeedback.push(feedback);
+      }
+
+      document.getElementById('visitors').textContent = 
+        parseInt(document.getElementById('visitors').textContent) + visitorCount;
+
+      renderFeedback();
+      showNotification(`迎来 ${visitorCount} 位观众，收到 ${feedbackCount} 条评价！`);
+    }
+
+    function updateStats() {
+      const items = gameState.exhibition.items;
+      document.getElementById('itemCount').textContent = items.length + ' 件';
+      
+      const eras = [...new Set(items.map(e => e.artifact.era))];
+      document.getElementById('eraCount').textContent = eras.length + ' 个';
+      
+      if (items.length > 0) {
+        const avgRarity = items.reduce((sum, e) => sum + (e.artifact.rarity || 1), 0) / items.length;
+        document.getElementById('avgRarity').textContent = avgRarity.toFixed(1) + ' ★';
+      } else {
+        document.getElementById('avgRarity').textContent = '0 ★';
+      }
+    }
+
+    function showNotification(message, type = 'success') {
+      const container = document.getElementById('notificationContainer');
+      const notif = document.createElement('div');
+      notif.className = 'notification' + (type === 'error' ? ' error' : '');
+      notif.textContent = message;
+      container.appendChild(notif);
+      setTimeout(() => notif.remove(), 3000);
+    }
+
+    init();
+    setInterval(async () => {
+      gameState = await getGameState();
+      renderShowcases();
+      updateStats();
+    }, 3000);
+  </script>
+</body>
+</html>

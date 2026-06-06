@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>博物馆文物修复工作室</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <h1>🏛️ 博物馆文物修复工作室</h1>
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-icon">💰</span>
+        <span class="status-value" id="budget">50,000</span>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">⭐</span>
+        <span class="status-value" id="reputation">0</span>
+      </div>
+      <div class="status-item">
+        <span class="status-icon">📊</span>
+        <span class="status-value" id="level">Lv.1</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-container">
+    <div class="menu-grid">
+      <div class="menu-card" onclick="openRestoration()">
+        <span class="menu-icon">🔧</span>
+        <div class="menu-title">修复台</div>
+        <div class="menu-desc">文物修复核心工作区<br/>观察、清洁、拼合、上色</div>
+      </div>
+
+      <div class="menu-card" onclick="openMaterials()">
+        <span class="menu-icon">🧪</span>
+        <div class="menu-title">材料柜</div>
+        <div class="menu-desc">管理修复材料<br/>调配修补药剂</div>
+      </div>
+
+      <div class="menu-card" onclick="openLab()">
+        <span class="menu-icon">🔬</span>
+        <div class="menu-title">检测室</div>
+        <div class="menu-desc">科学分析文物<br/>年代与材质鉴定</div>
+      </div>
+
+      <div class="menu-card" onclick="openArchives()">
+        <span class="menu-icon">📋</span>
+        <div class="menu-title">任务档案</div>
+        <div class="menu-desc">查看委托任务<br/>管理修复记录</div>
+      </div>
+
+      <div class="menu-card" onclick="openExhibition()">
+        <span class="menu-icon">🖼️</span>
+        <div class="menu-title">展厅布置</div>
+        <div class="menu-desc">安排展陈设计<br/>收集观众反馈</div>
+      </div>
+
+      <div class="menu-card" onclick="openTraining()">
+        <span class="menu-icon">👨‍🎓</span>
+        <div class="menu-title">学徒培训</div>
+        <div class="menu-desc">培养修复助手<br/>解锁专业技能</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 30px;">
+      <div class="card-title">📚 图鉴收藏</div>
+      <div class="collection-grid" id="collectionGrid"></div>
+    </div>
+  </div>
+
+  <script src="../data/game-data.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    async function loadGameState() {
+      const state = await getGameState();
+      document.getElementById('budget').textContent = state.budget.toLocaleString();
+      document.getElementById('reputation').textContent = state.reputation;
+      document.getElementById('level').textContent = 'Lv.' + state.level;
+      loadCollection(state);
+    }
+
+    function loadCollection(state) {
+      const grid = document.getElementById('collectionGrid');
+      grid.innerHTML = '';
+      const allArtifacts = getArtifacts();
+      allArtifacts.forEach(art => {
+        const collected = state.collection.find(c => c.id === art.id);
+        const item = document.createElement('div');
+        item.className = 'collection-item' + (collected ? '' : ' locked');
+        item.innerHTML = `
+          <div class="collection-icon">${collected ? art.image : '❓'}</div>
+          <div class="collection-name">${collected ? art.name : '???'}</div>
+        `;
+        grid.appendChild(item);
+      });
+    }
+
+    function openRestoration() { ipcRenderer.invoke('open-restoration'); }
+    function openMaterials() { ipcRenderer.invoke('open-materials'); }
+    function openLab() { ipcRenderer.invoke('open-lab'); }
+    function openArchives() { ipcRenderer.invoke('open-archives'); }
+    function openExhibition() { ipcRenderer.invoke('open-exhibition'); }
+    function openTraining() { ipcRenderer.invoke('open-training'); }
+
+    loadGameState();
+    setInterval(loadGameState, 3000);
+  </script>
+</body>
+</html>

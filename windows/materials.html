@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>材料柜</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <h1>🧪 材料柜</h1>
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-icon">💰</span>
+        <span class="status-value" id="budget">50,000</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-container">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('inventory')">📦 库存管理</button>
+      <button class="tab" onclick="switchTab('shop')">🛒 材料商店</button>
+      <button class="tab" onclick="switchTab('mix')">⚗️ 材料调配</button>
+      <button class="tab" onclick="switchTab('tools')">🔧 工具解锁</button>
+    </div>
+
+    <div id="inventoryTab">
+      <div class="card">
+        <div class="card-title">📦 当前库存</div>
+        <div class="grid-3" id="materialsGrid"></div>
+      </div>
+    </div>
+
+    <div id="shopTab" style="display: none;">
+      <div class="card">
+        <div class="card-title">🛒 材料商店</div>
+        <p style="margin-bottom: 15px; color: #a08060;">购买修复所需的各种材料</p>
+        <div class="grid-3" id="shopGrid"></div>
+      </div>
+    </div>
+
+    <div id="mixTab" style="display: none;">
+      <div class="card">
+        <div class="card-title">⚗️ 材料调配</div>
+        <div class="grid-2">
+          <div>
+            <h3 style="color: #d4af37; margin-bottom: 15px;">选择原料</h3>
+            <div id="mixIngredients"></div>
+          </div>
+          <div>
+            <h3 style="color: #d4af37; margin-bottom: 15px;">调配结果</h3>
+            <div class="mixing-bowl">
+              <span class="mixture" id="mixResult">🧪</span>
+            </div>
+            <div id="mixInfo" style="text-align: center;">
+              <p style="color: #a08060;">选择材料进行调配</p>
+            </div>
+            <div style="text-align: center; margin-top: 20px;">
+              <button class="btn btn-primary" onclick="doMix()">开始调配</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toolsTab" style="display: none;">
+      <div class="card">
+        <div class="card-title">🔧 专业工具</div>
+        <p style="margin-bottom: 15px; color: #a08060;">解锁高级修复工具，提高修复效率</p>
+        <div class="grid-3" id="toolsGrid"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="notificationContainer"></div>
+
+  <script src="../data/game-data.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
+    let gameState = null;
+    let selectedMix = [];
+
+    const MIX_RECIPES = [
+      { ingredients: ['cleaningSolution', 'solvent'], result: '强力清洁剂', effect: '清洁效率+20%' },
+      { ingredients: ['adhesive', 'filler'], result: '高强度粘合剂', effect: '拼接强度+30%' },
+      { ingredients: ['pigment', 'varnish'], result: '彩色保护漆', effect: '上色持久度+25%' },
+      { ingredients: ['cleaningSolution', 'pigment'], result: '颜料清除剂', effect: '去除错误上色' },
+      { ingredients: ['filler', 'solvent'], result: '柔性填充剂', effect: '适用于脆弱材质' }
+    ];
+
+    async function init() {
+      gameState = await getGameState();
+      updateStatus();
+      renderInventory();
+      renderShop();
+      renderMixIngredients();
+      renderTools();
+    }
+
+    function updateStatus() {
+      document.getElementById('budget').textContent = gameState.budget.toLocaleString();
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      
+      ['inventory', 'shop', 'mix', 'tools'].forEach(t => {
+        document.getElementById(t + 'Tab').style.display = t === tabName ? 'block' : 'none';
+      });
+    }
+
+    function renderInventory() {
+      const grid = document.getElementById('materialsGrid');
+      const materialsInfo = getMaterialsInfo();
+      grid.innerHTML = Object.entries(gameState.materials).map(([key, amount]) => {
+        const info = materialsInfo[key];
+        return `
+          <div class="item-card">
+            <div class="item-icon">${getMaterialIcon(key)}</div>
+            <div class="item-name">${info?.name || key}</div>
+            <div class="item-meta">库存：${amount} ${info?.unit || ''}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderShop() {
+      const grid = document.getElementById('shopGrid');
+      const materialsInfo = getMaterialsInfo();
+      grid.innerHTML = Object.entries(materialsInfo).map(([key, info]) => `
+        <div class="item-card">
+          <div class="item-icon">${getMaterialIcon(key)}</div>
+          <div class="item-name">${info.name}</div>
+          <div class="item-meta">${info.description}</div>
+          <div style="text-align: center; margin-top: 10px;">
+            <p style="color: #d4af37; margin-bottom: 8px;">💰 ${info.price}/${info.unit}</p>
+            <div style="display: flex; gap: 5px; justify-content: center;">
+              <button class="btn" style="padding: 5px 10px; font-size: 12px;" onclick="buyMaterial('${key}', 1)">买1</button>
+              <button class="btn" style="padding: 5px 10px; font-size: 12px;" onclick="buyMaterial('${key}', 5)">买5</button>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function buyMaterial(key, amount) {
+      const info = getMaterialsInfo()[key];
+      const cost = info.price * amount;
+      const result = await ipcRenderer.invoke('buy-material', key, amount, cost);
+      if (result.success) {
+        gameState = result;
+        updateStatus();
+        renderInventory();
+        showNotification(`购买成功：${info.name} x${amount}`);
+      } else {
+        showNotification('余额不足！', 'error');
+      }
+    }
+
+    function renderMixIngredients() {
+      const container = document.getElementById('mixIngredients');
+      const materialsInfo = getMaterialsInfo();
+      container.innerHTML = Object.entries(gameState.materials).map(([key, amount]) => `
+        <div class="list-item">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 24px;">${getMaterialIcon(key)}</span>
+            <div>
+              <div>${materialsInfo[key]?.name || key}</div>
+              <div style="font-size: 11px; color: #a08060;">库存: ${amount}</div>
+            </div>
+          </div>
+          <div>
+            <input type="checkbox" ${amount > 0 ? '' : 'disabled'} 
+                   onchange="toggleMix('${key}', this)"
+                   ${selectedMix.includes(key) ? 'checked' : ''}>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function toggleMix(key, checkbox) {
+      if (checkbox.checked) {
+        if (selectedMix.length < 2) {
+          selectedMix.push(key);
+        } else {
+          checkbox.checked = false;
+          showNotification('最多选择2种材料', 'error');
+          return;
+        }
+      } else {
+        selectedMix = selectedMix.filter(k => k !== key);
+      }
+      updateMixResult();
+    }
+
+    function updateMixResult() {
+      const resultEl = document.getElementById('mixResult');
+      const infoEl = document.getElementById('mixInfo');
+      
+      if (selectedMix.length === 0) {
+        resultEl.textContent = '🧪';
+        infoEl.innerHTML = '<p style="color: #a08060;">选择材料进行调配</p>';
+      } else if (selectedMix.length === 1) {
+        resultEl.textContent = getMaterialIcon(selectedMix[0]);
+        infoEl.innerHTML = '<p style="color: #a08060;">再选择一种材料</p>';
+      } else {
+        const recipe = MIX_RECIPES.find(r => 
+          r.ingredients.includes(selectedMix[0]) && r.ingredients.includes(selectedMix[1])
+        );
+        if (recipe) {
+          resultEl.textContent = '✨';
+          infoEl.innerHTML = `
+            <p style="color: #d4af37; font-weight: bold;">${recipe.result}</p>
+            <p style="color: #4caf50; font-size: 12px;">${recipe.effect}</p>
+          `;
+        } else {
+          resultEl.textContent = '❓';
+          infoEl.innerHTML = '<p style="color: #f44336;">未知配方，尝试其他组合</p>';
+        }
+      }
+    }
+
+    function doMix() {
+      if (selectedMix.length !== 2) {
+        showNotification('请选择2种材料', 'error');
+        return;
+      }
+      const recipe = MIX_RECIPES.find(r => 
+        r.ingredients.includes(selectedMix[0]) && r.ingredients.includes(selectedMix[1])
+      );
+      if (recipe) {
+        showNotification(`调配成功：${recipe.result}！`);
+        selectedMix = [];
+        renderMixIngredients();
+        updateMixResult();
+      } else {
+        showNotification('调配失败，材料浪费了...', 'error');
+        selectedMix = [];
+        renderMixIngredients();
+        updateMixResult();
+      }
+    }
+
+    function renderTools() {
+      const grid = document.getElementById('toolsGrid');
+      const toolsInfo = getToolsInfo();
+      grid.innerHTML = Object.entries(gameState.tools).map(([key, tool]) => {
+        const info = toolsInfo[key];
+        return `
+          <div class="item-card ${tool.unlocked ? '' : 'locked'}" style="${tool.unlocked ? '' : 'opacity: 0.7;'}">
+            <div class="item-icon">${getToolIcon(key)}</div>
+            <div class="item-name">${info?.name || key}</div>
+            <div class="item-meta">${info?.description || ''}</div>
+            <div style="text-align: center; margin-top: 10px;">
+              ${tool.unlocked 
+                ? `<p style="color: #4caf50;">✅ 已解锁 (Lv.${tool.level})</p>`
+                : `<p style="color: #d4af37; margin-bottom: 8px;">💰 ${info?.unlockCost?.toLocaleString() || 0}</p>
+                   <button class="btn btn-primary" style="padding: 5px 15px; font-size: 12px;" onclick="unlockTool('${key}')">解锁</button>`
+              }
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function unlockTool(key) {
+      const toolsInfo = getToolsInfo();
+      const cost = toolsInfo[key].unlockCost;
+      const result = await ipcRenderer.invoke('unlock-tool', key, cost);
+      if (result.success) {
+        gameState = result;
+        updateStatus();
+        renderTools();
+        showNotification(`解锁成功：${toolsInfo[key].name}！`);
+      } else {
+        showNotification('余额不足！', 'error');
+      }
+    }
+
+    function getMaterialIcon(key) {
+      const icons = {
+        cleaningSolution: '🧴',
+        adhesive: '🫙',
+        filler: '🧱',
+        pigment: '🎨',
+        varnish: '💧',
+        solvent: '⚗️'
+      };
+      return icons[key] || '📦';
+    }
+
+    function getToolIcon(key) {
+      const icons = {
+        softBrush: '🖌️',
+        scalpel: '🔪',
+        microscope: '🔬',
+        laserCleaner: '💫',
+        uvLamp: '💡',
+        xrayMachine: '📷'
+      };
+      return icons[key] || '🔧';
+    }
+
+    function showNotification(message, type = 'success') {
+      const container = document.getElementById('notificationContainer');
+      const notif = document.createElement('div');
+      notif.className = 'notification' + (type === 'error' ? ' error' : '');
+      notif.textContent = message;
+      container.appendChild(notif);
+      setTimeout(() => notif.remove(), 3000);
+    }
+
+    init();
+    setInterval(async () => {
+      gameState = await getGameState();
+      updateStatus();
+    }, 2000);
+  </script>
+</body>
+</html>

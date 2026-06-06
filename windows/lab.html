@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>检测室</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <h1>🔬 检测室</h1>
+    <div class="status-bar">
+      <div class="status-item">
+        <span class="status-icon">💰</span>
+        <span class="status-value" id="budget">50,000</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-container">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">🏺 选择检测文物</div>
+        <div id="artifactList" style="max-height: 500px; overflow-y: auto;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔬 检测设备</div>
+        <div class="lab-equipment">
+          <div class="equipment" onclick="runTest('dating')">
+            <div class="equipment-icon">📅</div>
+            <div class="equipment-name">年代检测</div>
+          </div>
+          <div class="equipment" onclick="runTest('material')">
+            <div class="equipment-icon">🔍</div>
+            <div class="equipment-name">材质分析</div>
+          </div>
+          <div class="equipment" onclick="runTest('xray')">
+            <div class="equipment-icon">📷</div>
+            <div class="equipment-name">X光扫描</div>
+          </div>
+        </div>
+
+        <div id="selectedArtifact" style="margin-top: 20px;">
+          <p style="color: #a08060; text-align: center;">请选择要检测的文物</p>
+        </div>
+
+        <div id="testResult" style="margin-top: 20px; display: none;">
+          <div class="card" style="background: rgba(0,0,0,0.3);">
+            <div class="card-title">📊 检测报告</div>
+            <div id="resultContent"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <div class="card-title">📋 检测历史</div>
+      <div id="testHistory"></div>
+    </div>
+  </div>
+
+  <div id="notificationContainer"></div>
+
+  <script src="../data/game-data.js"></script>
+  <script>
+    const { ipcRenderer } = require('electron');
+    let gameState = null;
+    let selectedArtifact = null;
+    let testHistory = [];
+
+    async function init() {
+      gameState = await getGameState();
+      updateStatus();
+      renderArtifactList();
+      renderTestHistory();
+    }
+
+    function updateStatus() {
+      document.getElementById('budget').textContent = gameState.budget.toLocaleString();
+    }
+
+    function renderArtifactList() {
+      const container = document.getElementById('artifactList');
+      const artifacts = getArtifacts();
+      
+      container.innerHTML = artifacts.map((art, i) => `
+        <div class="list-item ${selectedArtifact?.id === art.id ? 'selected' : ''}" 
+             style="cursor: pointer; ${selectedArtifact?.id === art.id ? 'border-left: 3px solid #d4af37;' : ''}"
+             onclick="selectArtifact(${i})">
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <span style="font-size: 32px;">${art.image}</span>
+            <div>
+              <div style="color: #d4af37;">${art.name}</div>
+              <div style="font-size: 12px; color: #a08060;">
+                <span class="tag tag-era">${art.era}</span>
+                <span class="tag tag-era">${art.material}</span>
+              </div>
+            </div>
+          </div>
+          <span>▶</span>
+        </div>
+      `).join('');
+    }
+
+    function selectArtifact(index) {
+      const artifacts = getArtifacts();
+      selectedArtifact = artifacts[index];
+      renderArtifactList();
+      
+      const infoEl = document.getElementById('selectedArtifact');
+      infoEl.innerHTML = `
+        <div style="text-align: center; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+          <div style="font-size: 80px; margin-bottom: 15px;">${selectedArtifact.image}</div>
+          <h3 style="color: #d4af37; margin-bottom: 10px;">${selectedArtifact.name}</h3>
+          <p style="color: #a08060; font-size: 13px; margin-bottom: 15px;">${selectedArtifact.description}</p>
+          <div style="margin-bottom: 10px;">
+            <span class="tag tag-era">${selectedArtifact.era}</span>
+            <span class="tag tag-era">${selectedArtifact.material}</span>
+            <span class="tag tag-difficulty">稀有度 ${'★'.repeat(selectedArtifact.rarity)}</span>
+          </div>
+          <p style="color: #a08060; font-size: 12px;">
+            <strong>已知破损：</strong>${selectedArtifact.damage.join('、')}
+          </p>
+        </div>
+      `;
+    }
+
+    async function runTest(type) {
+      if (!selectedArtifact) {
+        showNotification('请先选择文物！', 'error');
+        return;
+      }
+
+      const testInfo = {
+        dating: { name: '年代检测', cost: 500, icon: '📅' },
+        material: { name: '材质分析', cost: 800, icon: '🔍' },
+        xray: { name: 'X光扫描', cost: 1500, icon: '📷' }
+      };
+
+      const info = testInfo[type];
+      
+      if (gameState.budget < info.cost) {
+        showNotification('余额不足！', 'error');
+        return;
+      }
+
+      gameState.budget -= info.cost;
+      await ipcRenderer.invoke('update-budget', -info.cost);
+      updateStatus();
+
+      showNotification(`${info.name}进行中...`);
+
+      setTimeout(() => {
+        displayTestResult(type);
+        addToHistory(type, info);
+        showNotification(`${info.name}完成！`);
+      }, 2000);
+    }
+
+    function displayTestResult(type) {
+      const resultEl = document.getElementById('testResult');
+      const contentEl = document.getElementById('resultContent');
+      resultEl.style.display = 'block';
+
+      let content = '';
+      const art = selectedArtifact;
+
+      switch (type) {
+        case 'dating':
+          content = `
+            <h4 style="color: #d4af37; margin-bottom: 10px;">📅 年代检测报告</h4>
+            <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
+              <div class="scan-line"></div>
+              <p><strong>检测物品：</strong>${art.name}</p>
+              <p><strong>推定年代：</strong><span style="color: #4caf50;">${art.era}</span></p>
+              <p><strong>距今时间：</strong>${getEraYears(art.era)}</p>
+              <p><strong>检测方法：</strong>碳14测年法 / 地层学分析</p>
+              <p><strong>可信度：</strong>95%</p>
+            </div>
+          `;
+          break;
+        case 'material':
+          content = `
+            <h4 style="color: #d4af37; margin-bottom: 10px;">🔍 材质分析报告</h4>
+            <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
+              <div class="scan-line"></div>
+              <p><strong>检测物品：</strong>${art.name}</p>
+              <p><strong>主要材质：</strong><span style="color: #4caf50;">${art.material}</span></p>
+              <p><strong>成分分析：</strong>${getMaterialComposition(art.material)}</p>
+              <p><strong>硬度：</strong>${getMaterialHardness(art.material)}</p>
+              <p><strong>保存状态：</strong>${getCondition(art)}</p>
+            </div>
+          `;
+          break;
+        case 'xray':
+          content = `
+            <h4 style="color: #d4af37; margin-bottom: 10px;">📷 X光扫描报告</h4>
+            <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
+              <div class="scan-line"></div>
+              <p><strong>检测物品：</strong>${art.name}</p>
+              <p><strong>内部结构：</strong>${getInternalStructure(art)}</p>
+              <p><strong>隐藏破损：</strong>${getHiddenDamage(art)}</p>
+              <p><strong>修复痕迹：</strong>${getRepairTraces(art)}</p>
+              <p><strong>建议：</strong>${getRecommendation(art)}</p>
+            </div>
+          `;
+          break;
+      }
+
+      contentEl.innerHTML = content;
+    }
+
+    function getEraYears(era) {
+      const map = {
+        '商代': '约3600年前',
+        '战国': '约2400年前',
+        '秦代': '约2200年前',
+        '汉代': '约2000年前',
+        '唐代': '约1400年前',
+        '宋代': '约1000年前',
+        '元代': '约700年前',
+        '明代': '约600年前',
+        '清代': '约200年前',
+        '白垩纪': '约6500万年前'
+      };
+      return map[era] || '未知';
+    }
+
+    function getMaterialComposition(material) {
+      const map = {
+        '青铜': '铜80% + 锡15% + 铅5%',
+        '瓷器': '高岭土 + 石英 + 长石',
+        '和田玉': '透闪石 + 阳起石',
+        '绢本设色': '蚕丝 + 矿物颜料',
+        '陶器': '黏土 + 石英砂',
+        '漆器': '天然漆 + 木胎',
+        '铜': '纯铜95% + 杂质5%',
+        '化石': '磷酸钙 + 矿物质沉积'
+      };
+      return map[material] || '待分析';
+    }
+
+    function getMaterialHardness(material) {
+      const map = {
+        '青铜': '摩氏硬度 3.5',
+        '瓷器': '摩氏硬度 6.5',
+        '和田玉': '摩氏硬度 6-6.5',
+        '绢本设色': '摩氏硬度 <1 (有机材质)',
+        '陶器': '摩氏硬度 4-5',
+        '漆器': '摩氏硬度 2-3',
+        '铜': '摩氏硬度 3',
+        '化石': '摩氏硬度 5'
+      };
+      return map[material] || '未知';
+    }
+
+    function getCondition(art) {
+      const conditions = ['一般', '较差', '已出现风化迹象', '需紧急处理'];
+      return conditions[Math.floor(Math.random() * conditions.length)];
+    }
+
+    function getInternalStructure(art) {
+      const structures = [
+        '实心结构，无明显中空',
+        '存在内部空腔，可能为铸造痕迹',
+        '多层结构，显示多次加工痕迹',
+        '内部有金属支撑物'
+      ];
+      return structures[Math.floor(Math.random() * structures.length)];
+    }
+
+    function getHiddenDamage(art) {
+      const damages = [
+        '发现2处内部裂纹，表面不可见',
+        '内部结构完整，无隐藏损伤',
+        '发现早期修复的填充物',
+        '存在微小气孔，可能影响强度'
+      ];
+      return damages[Math.floor(Math.random() * damages.length)];
+    }
+
+    function getRepairTraces(art) {
+      const traces = [
+        '无明显古代修复痕迹',
+        '发现清代修补痕迹',
+        '有近代修复使用的粘合剂残留',
+        '存在多处不同时期的修复痕迹'
+      ];
+      return traces[Math.floor(Math.random() * traces.length)];
+    }
+
+    function getRecommendation(art) {
+      const recs = [
+        '建议先进行加固处理，再进行表面修复',
+        '可直接进行常规修复操作',
+        '建议使用激光清洗，避免机械损伤',
+        '需在恒温恒湿环境下操作'
+      ];
+      return recs[Math.floor(Math.random() * recs.length)];
+    }
+
+    function addToHistory(type, info) {
+      testHistory.unshift({
+        artifact: selectedArtifact.name,
+        testType: info.name,
+        icon: info.icon,
+        time: new Date().toLocaleString(),
+        cost: info.cost
+      });
+      renderTestHistory();
+    }
+
+    function renderTestHistory() {
+      const container = document.getElementById('testHistory');
+      if (testHistory.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center;">暂无检测记录</p>';
+        return;
+      }
+      container.innerHTML = testHistory.map(item => `
+        <div class="list-item">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 24px;">${item.icon}</span>
+            <div>
+              <div>${item.artifact} - ${item.testType}</div>
+              <div style="font-size: 11px; color: #a08060;">${item.time}</div>
+            </div>
+          </div>
+          <span style="color: #d4af37;">💰 ${item.cost}</span>
+        </div>
+      `).join('');
+    }
+
+    function showNotification(message, type = 'success') {
+      const container = document.getElementById('notificationContainer');
+      const notif = document.createElement('div');
+      notif.className = 'notification' + (type === 'error' ? ' error' : '');
+      notif.textContent = message;
+      container.appendChild(notif);
+      setTimeout(() => notif.remove(), 3000);
+    }
+
+    init();
+    setInterval(async () => {
+      gameState = await getGameState();
+      updateStatus();
+    }, 2000);
+  </script>
+</body>
+</html>
