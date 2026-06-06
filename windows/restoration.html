@@ -124,6 +124,20 @@
     let usedMaterials = {};
     let forceQualityModifier = 1;
     let emergencyPenalty = 0;
+    let toolBonus = {
+      microscopeUsed: false,
+      laserUsed: false,
+      xrayUsed: false,
+      uvUsed: false
+    };
+    let forceStats = {
+      perfectCount: 0,
+      tooLightCount: 0,
+      tooHeavyCount: 0,
+      totalActions: 0
+    };
+    let observeDetails = [];
+    let cleanEfficiency = 1;
 
     const RESTORATION_STEPS = [
       { id: 'observe', name: '观察', icon: '👁️', desc: '仔细观察文物，记录破损情况', consume: null },
@@ -264,11 +278,33 @@
       currentTask = task;
       currentStepIndex = 0;
       stepsProgress = {};
+      damageSpots = [];
+      puzzlePieces = [];
       restorationLog = [];
       usedMaterials = {};
       emergencyPenalty = 0;
       forceQualityModifier = 1;
       currentEmergency = null;
+      selectedTool = null;
+      selectedMaterial = null;
+      selectedPiece = null;
+      selectedColor = null;
+      zoomLevel = 1;
+      toolForce = 5;
+      toolBonus = {
+        microscopeUsed: false,
+        laserUsed: false,
+        xrayUsed: false,
+        uvUsed: false
+      };
+      forceStats = {
+        perfectCount: 0,
+        tooLightCount: 0,
+        tooHeavyCount: 0,
+        totalActions: 0
+      };
+      observeDetails = [];
+      cleanEfficiency = 1;
       await ipcRenderer.invoke('set-current-task', task);
       loadTask(task);
       addLog('系统', '开始修复任务：' + task.title);
@@ -424,6 +460,7 @@
       selectedTool = toolId;
       const stepId = RESTORATION_STEPS[currentStepIndex].id;
       renderToolbar(stepId);
+      renderWorkArea(stepId);
       showNotification('已选择工具');
     }
 
@@ -471,7 +508,7 @@
       renderMaterialSelect(stepId);
     }
 
-    async function checkAndConsumeMaterial() {
+    async function checkAndConsumeMaterial(amountMultiplier = 1) {
       const step = RESTORATION_STEPS[currentStepIndex];
       if (!step.consume) return { success: true };
       
@@ -482,26 +519,28 @@
       
       if (cost.alt && matToUse === cost.alt) {
         if (gameState.materials[cost.alt] > 0) {
-          const result = await ipcRenderer.invoke('use-material', cost.alt, 1);
+          const useAmount = Math.ceil(amountMultiplier);
+          const result = await ipcRenderer.invoke('use-material', cost.alt, useAmount);
           if (result.success) {
             gameState.materials = result.materials;
-            usedMaterials[cost.alt] = (usedMaterials[cost.alt] || 0) + 1;
-            addLog('材料', `使用 ${getMaterialsInfo()[cost.alt]?.name} x1`);
+            usedMaterials[cost.alt] = (usedMaterials[cost.alt] || 0) + useAmount;
+            addLog('材料', `使用 ${getMaterialsInfo()[cost.alt]?.name} x${useAmount}`);
             return { success: true, bonus: true };
           }
         }
       }
       
-      if (gameState.materials[cost.material] < cost.amount) {
+      const actualAmount = Math.ceil(cost.amount * amountMultiplier);
+      if (gameState.materials[cost.material] < actualAmount) {
         showNotification(`材料不足：${getMaterialsInfo()[cost.material]?.name}，请前往材料柜购买！`, 'error');
         return { success: false };
       }
       
-      const result = await ipcRenderer.invoke('use-material', cost.material, cost.amount);
+      const result = await ipcRenderer.invoke('use-material', cost.material, actualAmount);
       if (result.success) {
         gameState.materials = result.materials;
-        usedMaterials[cost.material] = (usedMaterials[cost.material] || 0) + cost.amount;
-        addLog('材料', `使用 ${getMaterialsInfo()[cost.material]?.name} x${cost.amount}`);
+        usedMaterials[cost.material] = (usedMaterials[cost.material] || 0) + actualAmount;
+        addLog('材料', `使用 ${getMaterialsInfo()[cost.material]?.name} x${actualAmount}`);
         updateStatus();
         return { success: true };
       }
@@ -532,21 +571,42 @@
     }
 
     function renderObserveArea(area) {
+      const useMicroscope = selectedTool === 'microscope';
+      const useXray = selectedTool === 'xray';
+      
       if (damageSpots.length === 0) {
-        damageSpots = generateDamageSpots(5 + (selectedTool === 'xray' ? 2 : 0));
+        damageSpots = generateDamageSpots(useXray ? 7 : 5, useMicroscope);
       }
-      let spotsHtml = damageSpots.map((spot, i) => `
+      
+      let spotsHtml = damageSpots.map((spot, i) => {
+        const isVisible = !spot.hidden || useXray;
+        const size = useMicroscope ? 18 : 12;
+        return `
         <div class="damage-spot ${spot.found ? 'cleaned' : ''}" 
-             style="left: ${spot.x}%; top: ${spot.y}%;"
+             style="left: ${spot.x}%; top: ${spot.y}%; 
+                    width: ${size}px; height: ${size}px;
+                    ${spot.hidden && !useXray ? 'opacity: 0.3; filter: blur(2px);' : ''}
+                    ${spot.microDetail && !useMicroscope ? 'display: none;' : ''}"
              onclick="findDamage(${i})"
-             title="点击观察">
+             title="${!isVisible ? '需要X光设备' : spot.microDetail ? '显微镜下可见' : '点击观察'}">
         </div>
-      `).join('');
+      `}).join('');
+      
+      const detailPanel = useMicroscope ? `
+        <div style="position: absolute; bottom: 10px; left: 10px; right: 10px; 
+                    background: rgba(0,0,0,0.8); padding: 10px; border-radius: 6px; font-size: 11px;">
+          <strong style="color: #4caf50;">🔬 显微镜模式</strong>
+          <p style="margin: 5px 0 0; color: #a08060;">放大倍率 40x，可观察细微纹理和微观损伤</p>
+          ${observeDetails.length > 0 ? `<p style="margin: 5px 0 0; color: #d4af37;">已发现细节：${observeDetails.join('、')}</p>` : ''}
+        </div>
+      ` : '';
       
       area.innerHTML = `
-        <div id="artifactDisplay" class="artifact-display zoom-${zoomLevel}">
+        <div id="artifactDisplay" class="artifact-display zoom-${zoomLevel}" 
+             style="${useMicroscope ? 'filter: contrast(1.2) brightness(1.1);' : ''}">
           ${currentTask.artifact.image}
           <div class="damage-overlay">${spotsHtml}</div>
+          ${detailPanel}
         </div>
       `;
       
@@ -554,7 +614,17 @@
         if (damageSpots.filter(s => s.found).length >= 3) {
           if (!stepsProgress['observe']) {
             stepsProgress['observe'] = true;
-            addLog('观察', `发现 ${damageSpots.filter(s => s.found).length} 处破损点`);
+            const foundCount = damageSpots.filter(s => s.found).length;
+            const detailCount = damageSpots.filter(s => s.found && s.microDetail).length;
+            addLog('观察', `发现 ${foundCount} 处破损点${detailCount > 0 ? `，其中 ${detailCount} 处微观细节（显微镜发现）` : ''}`);
+            if (useMicroscope) {
+              toolBonus.microscopeUsed = true;
+              addLog('工具', '使用显微镜观察，获得精度加成');
+            }
+            if (useXray) {
+              toolBonus.xrayUsed = true;
+              addLog('工具', '使用X光透视，发现内部损伤');
+            }
             updateProgress();
             loadStep(currentStepIndex);
           }
@@ -562,49 +632,85 @@
       }, 100);
     }
 
-    function generateDamageSpots(count) {
+    function generateDamageSpots(count, hasMicroscope) {
       const spots = [];
+      const microDetails = ['表面划痕', '氧化斑点', '细微裂纹', '腐蚀痕迹', '修复残留'];
       for (let i = 0; i < count; i++) {
         spots.push({
           x: 10 + Math.random() * 80,
           y: 10 + Math.random() * 80,
           found: false,
           cleaned: false,
-          hidden: i >= 5
+          hidden: i >= 5,
+          microDetail: hasMicroscope && i >= 3 && i < 5 ? microDetails[i - 3] : null
         });
       }
       return spots;
     }
 
     function findDamage(index) {
-      if (damageSpots[index].hidden && selectedTool !== 'xray') {
+      const spot = damageSpots[index];
+      
+      if (spot.hidden && selectedTool !== 'xray') {
         showNotification('需要X光设备才能发现此隐藏损伤！', 'error');
         return;
       }
-      if (!damageSpots[index].found) {
-        damageSpots[index].found = true;
-        showNotification(damageSpots[index].hidden ? '发现隐藏损伤！' : '发现破损点！');
-        addLog('观察', `发现破损点 #${index + 1}${damageSpots[index].hidden ? ' (隐藏)' : ''}`);
+      
+      if (spot.microDetail && selectedTool !== 'microscope' && !spot.found) {
+        showNotification('微观细节需要显微镜才能观察！', 'error');
+        return;
+      }
+      
+      if (!spot.found) {
+        spot.found = true;
+        let msg = '发现破损点！';
+        let logText = `发现破损点 #${index + 1}`;
+        
+        if (spot.hidden) {
+          msg = '发现内部隐藏损伤！';
+          logText += ' (X光透视发现)';
+        }
+        if (spot.microDetail) {
+          msg = `发现微观细节：${spot.microDetail}！`;
+          logText += ` - ${spot.microDetail} (显微镜发现)`;
+          observeDetails.push(spot.microDetail);
+        }
+        
+        showNotification(msg);
+        addLog('观察', logText);
         renderWorkArea('observe');
       }
     }
 
     async function renderCleanArea(area) {
       const foundSpots = damageSpots.filter(s => s.found);
+      const useLaser = selectedTool === 'laser';
+      
       let spotsHtml = foundSpots.map((spot, i) => {
         const originalIndex = damageSpots.indexOf(spot);
         return `
         <div class="damage-spot ${spot.cleaned ? 'cleaned' : ''}" 
-             style="left: ${spot.x}%; top: ${spot.y}%; background: ${spot.cleaned ? 'rgba(46,125,50,0.3)' : 'rgba(139,69,19,0.6)'}"
+             style="left: ${spot.x}%; top: ${spot.y}%; 
+                    background: ${spot.cleaned ? 'rgba(46,125,50,0.3)' : 'rgba(139,69,19,0.6)'};
+                    ${useLaser ? 'box-shadow: 0 0 8px rgba(0,255,255,0.5);' : ''}"
              onclick="cleanDamage(${originalIndex})"
-             title="${spot.cleaned ? '已清洁' : '点击清洁'}">
+             title="${spot.cleaned ? '已清洁' : useLaser ? '激光清洁（高效）' : '点击清洁'}">
         </div>
       `}).join('');
+      
+      const laserPanel = useLaser ? `
+        <div style="position: absolute; bottom: 10px; left: 10px; right: 10px; 
+                    background: rgba(0,100,100,0.8); padding: 10px; border-radius: 6px; font-size: 11px;">
+          <strong style="color: #00ffff;">💫 激光清洗模式</strong>
+          <p style="margin: 5px 0 0; color: #a08060;">高效清洁：可同时处理多处污渍，耗材用量减半，损伤风险降低</p>
+        </div>
+      ` : '';
       
       area.innerHTML = `
         <div id="artifactDisplay" class="artifact-display zoom-${zoomLevel}">
           ${currentTask.artifact.image}
           <div class="damage-overlay">${spotsHtml}</div>
+          ${laserPanel}
         </div>
       `;
       
@@ -613,6 +719,10 @@
           if (!stepsProgress['clean']) {
             stepsProgress['clean'] = true;
             addLog('清洁', `完成清洁，处理 ${foundSpots.filter(s => s.cleaned).length} 处污渍`);
+            if (useLaser) {
+              toolBonus.laserUsed = true;
+              addLog('工具', '使用激光清洗机完成清洁，效率提升');
+            }
             updateProgress();
             loadStep(currentStepIndex);
           }
@@ -628,25 +738,56 @@
       
       if (damageSpots[index].cleaned) return;
       
-      const consumeResult = await checkAndConsumeMaterial();
+      const forceEffect = calculateForceEffect();
+      forceStats.totalActions++;
+      
+      if (forceEffect.tooLight) {
+        forceStats.tooLightCount++;
+        showNotification('力度太轻，污渍难以清除！请加大力度', 'error');
+        addLog('清洁', `尝试清洁破损点 #${index + 1}，力度过轻，未完成`);
+        return;
+      }
+      
+      const useLaser = selectedTool === 'laser';
+      const materialCost = useLaser ? 0.5 : 1;
+      
+      if (useLaser && Math.random() < 0.4) {
+        const nearby = damageSpots.findIndex((s, i) => 
+          i !== index && s.found && !s.cleaned && 
+          Math.abs(s.x - damageSpots[index].x) < 20 && 
+          Math.abs(s.y - damageSpots[index].y) < 20
+        );
+        if (nearby >= 0) {
+          damageSpots[nearby].cleaned = true;
+          addLog('清洁', `激光连带清洁破损点 #${nearby + 1}`);
+        }
+      }
+      
+      const consumeResult = await checkAndConsumeMaterial(materialCost);
       if (!consumeResult.success) return;
       
-      const forceEffect = calculateForceEffect();
-      
-      if (forceEffect.risk && Math.random() < 0.3 && !currentEmergency) {
+      const riskChance = useLaser ? 0.1 : 0.3;
+      if (forceEffect.risk && Math.random() < riskChance && !currentEmergency) {
         triggerEmergency('clean');
         return;
       }
       
-      let qualityBonus = 1;
-      if (selectedTool === 'laser') qualityBonus += 0.1;
-      if (consumeResult.bonus) qualityBonus += 0.1;
+      if (forceEffect.perfect) {
+        forceStats.perfectCount++;
+      }
+      if (forceEffect.tooHeavy) {
+        forceStats.tooHeavyCount++;
+      }
       
       damageSpots[index].cleaned = true;
       forceQualityModifier = Math.min(1.2, forceQualityModifier + forceEffect.qualityDelta * 0.05);
       
-      showNotification(forceEffect.qualityDelta > 0 ? '清洁完美！' : '清洁完成');
-      addLog('清洁', `清洁破损点 #${index + 1}，力度：${toolForce}`);
+      let msg = '清洁完成';
+      if (forceEffect.perfect) msg = '清洁完美！';
+      if (useLaser) msg = '⚡ ' + msg;
+      
+      showNotification(msg);
+      addLog('清洁', `清洁破损点 #${index + 1}，工具：${selectedTool === 'laser' ? '激光清洗机' : selectedTool}，力度：${toolForce}，效果：${forceEffect.qualityDelta > 0.5 ? '优秀' : forceEffect.qualityDelta > 0 ? '良好' : '一般'}`);
       
       renderWorkArea('clean');
       updateStatus();
@@ -654,15 +795,15 @@
 
     function calculateForceEffect() {
       if (toolForce <= 2) {
-        return { risk: false, qualityDelta: 0, slow: true };
+        return { risk: false, qualityDelta: -0.5, slow: true, tooLight: true, perfect: false, tooHeavy: false };
       } else if (toolForce <= 4) {
-        return { risk: false, qualityDelta: 0.5 };
+        return { risk: false, qualityDelta: 0.3, slow: false, tooLight: false, perfect: false, tooHeavy: false };
       } else if (toolForce <= 6) {
-        return { risk: false, qualityDelta: 1 };
+        return { risk: false, qualityDelta: 1, slow: false, tooLight: false, perfect: true, tooHeavy: false };
       } else if (toolForce <= 8) {
-        return { risk: true, qualityDelta: 0.5 };
+        return { risk: true, qualityDelta: 0.5, slow: false, tooLight: false, perfect: false, tooHeavy: false };
       } else {
-        return { risk: true, qualityDelta: -0.5 };
+        return { risk: true, qualityDelta: -0.5, slow: false, tooLight: false, perfect: false, tooHeavy: true };
       }
     }
 
@@ -768,9 +909,16 @@
     let selectedPiece = null;
     async function selectPiece(id) {
       selectedPiece = id;
+      const forceEffect = calculateForceEffect();
+      
+      if (forceEffect.tooLight) {
+        showNotification('力度太轻，无法稳固拿起碎片！', 'error');
+        return;
+      }
+      
       showNotification('已选择碎片，点击空位放置');
       
-      if (toolForce >= 8 && Math.random() < 0.2 && !currentEmergency) {
+      if (forceEffect.risk && Math.random() < 0.2 && !currentEmergency) {
         const consumeResult = await checkAndConsumeMaterial();
         if (consumeResult.success) {
           triggerEmergency('assemble');
@@ -784,6 +932,23 @@
         return;
       }
       
+      const forceEffect = calculateForceEffect();
+      forceStats.totalActions++;
+      
+      if (forceEffect.tooLight) {
+        forceStats.tooLightCount++;
+        showNotification('力度太轻，碎片无法粘合！', 'error');
+        addLog('拼合', `尝试放置碎片，力度过轻，粘合失败`);
+        return;
+      }
+      
+      if (forceEffect.perfect) {
+        forceStats.perfectCount++;
+      }
+      if (forceEffect.tooHeavy) {
+        forceStats.tooHeavyCount++;
+      }
+      
       const consumeResult = await checkAndConsumeMaterial();
       if (!consumeResult.success) return;
       
@@ -792,8 +957,14 @@
         piece.placed = true;
         piece.currentPos = pos;
         selectedPiece = null;
-        showNotification('碎片已放置！');
-        addLog('拼合', `放置 ${piece.name} 到位置 ${pos + 1}`);
+        
+        forceQualityModifier = Math.min(1.2, forceQualityModifier + forceEffect.qualityDelta * 0.05);
+        
+        let msg = '碎片已放置！';
+        if (forceEffect.perfect) msg = '碎片完美定位！';
+        
+        showNotification(msg);
+        addLog('拼合', `放置 ${piece.name} 到位置 ${pos + 1}，力度：${toolForce}，定位：${piece.correctPos === pos ? '正确' : '偏差'}`);
         renderWorkArea('assemble');
       }
     }
@@ -822,26 +993,38 @@
 
     async function applyFill() {
       const amount = parseInt(document.getElementById('fillAmount').value);
+      const forceEffect = calculateForceEffect();
+      forceStats.totalActions++;
       
-      const consumeResult = await checkAndConsumeMaterial();
+      if (forceEffect.tooLight) {
+        forceStats.tooLightCount++;
+        showNotification('力度太轻，填充不实，无法成型！', 'error');
+        addLog('补配', `尝试填充，力度过轻，失败`);
+        return;
+      }
+      
+      const consumeResult = await checkAndConsumeMaterial(forceEffect.tooHeavy ? 1.5 : 1);
       if (!consumeResult.success) return;
       
-      if (toolForce <= 2) {
-        showNotification('力度太轻，填充不实！', 'error');
-        return;
+      if (forceEffect.perfect) {
+        forceStats.perfectCount++;
+      }
+      if (forceEffect.tooHeavy) {
+        forceStats.tooHeavyCount++;
       }
       
       if (amount >= 70 && amount <= 90) {
         stepsProgress['fill'] = true;
-        addLog('补配', `填充完成，填充量：${amount}%，力度：${toolForce}`);
+        forceQualityModifier = Math.min(1.2, forceQualityModifier + forceEffect.qualityDelta * 0.05);
+        addLog('补配', `填充完成，填充量：${amount}%，力度：${toolForce}，效果：${forceEffect.perfect ? '完美' : '良好'}`);
         updateProgress();
-        showNotification('填充完美！');
+        showNotification(forceEffect.perfect ? '填充完美！' : '填充完成！');
         loadStep(currentStepIndex);
       } else if (amount < 70) {
         showNotification('填充不足，请增加填充量', 'error');
       } else {
-        if (toolForce >= 7) {
-          showNotification('填充过多且力度过大，可能造成损伤！', 'error');
+        if (forceEffect.tooHeavy) {
+          showNotification('填充过多且力度过大，造成轻微损伤！', 'error');
           emergencyPenalty += 0.03;
         } else {
           showNotification('填充过多，请减少填充量', 'error');
@@ -879,32 +1062,52 @@
         return;
       }
       
-      const consumeResult = await checkAndConsumeMaterial();
+      const forceEffect = calculateForceEffect();
+      forceStats.totalActions++;
+      
+      if (forceEffect.tooLight) {
+        forceStats.tooLightCount++;
+        showNotification('力度太轻，颜料无法均匀附着！', 'error');
+        addLog('上色', `尝试上色，力度过轻，色彩不均`);
+        return;
+      }
+      
+      if (forceEffect.perfect) {
+        forceStats.perfectCount++;
+      }
+      if (forceEffect.tooHeavy) {
+        forceStats.tooHeavyCount++;
+      }
+      
+      const consumeResult = await checkAndConsumeMaterial(forceEffect.tooHeavy ? 1.5 : 1);
       if (!consumeResult.success) return;
       
-      if (toolForce >= 9 && Math.random() < 0.25 && !currentEmergency) {
+      if (forceEffect.risk && Math.random() < 0.25 && !currentEmergency) {
         triggerEmergency('color');
         return;
       }
       
       stepsProgress['color'] = true;
-      addLog('上色', `上色完成，颜色：${selectedColor}，力度：${toolForce}`);
+      forceQualityModifier = Math.min(1.2, forceQualityModifier + forceEffect.qualityDelta * 0.05);
+      
+      addLog('上色', `上色完成，颜色：${selectedColor}，力度：${toolForce}，效果：${forceEffect.perfect ? '色彩均匀饱满' : forceEffect.tooHeavy ? '颜色过深' : '正常'}`);
       updateProgress();
-      showNotification('上色完成！');
+      showNotification(forceEffect.perfect ? '上色完美！色彩均匀饱满！' : '上色完成！');
       loadStep(currentStepIndex);
     }
 
     function renderProtectArea(area) {
+      const useUV = selectedTool === 'uv_lamp';
       area.innerHTML = `
         <div style="text-align: center;">
-          <div style="font-size: 100px; margin-bottom: 20px;">${currentTask.artifact.image}</div>
+          <div style="font-size: 100px; margin-bottom: 20px; ${useUV ? 'filter: hue-rotate(20deg) brightness(1.1);' : ''}">${currentTask.artifact.image}</div>
           <p style="margin-bottom: 20px; color: #a08060;">施加保护层，完成修复</p>
           <div style="margin-bottom: 20px;">
-            <div class="mixing-bowl">
+            <div class="mixing-bowl" style="${useUV ? 'box-shadow: 0 0 20px rgba(100,200,255,0.5);' : ''}">
               <span class="mixture">🛡️</span>
             </div>
             <p style="color: #a08060;">保护漆准备就绪</p>
-            ${selectedTool === 'uv_lamp' ? '<p style="color: #4caf50; font-size: 12px;">✨ 使用UV固化设备</p>' : ''}
+            ${useUV ? '<p style="color: #4caf50; font-size: 12px;">✨ 使用UV固化设备 - 更快更坚固</p>' : '<p style="color: #a08060; font-size: 12px;">自然干燥 - 耗时较长</p>'}
           </div>
           <button class="btn btn-primary" onclick="applyProtection()">施加保护层</button>
         </div>
@@ -912,13 +1115,39 @@
     }
 
     async function applyProtection() {
-      const consumeResult = await checkAndConsumeMaterial();
+      const forceEffect = calculateForceEffect();
+      forceStats.totalActions++;
+      
+      if (forceEffect.tooLight) {
+        forceStats.tooLightCount++;
+        showNotification('力度太轻，保护层喷涂不均！', 'error');
+        addLog('封护', `尝试封护，力度过轻，喷涂不均`);
+        return;
+      }
+      
+      if (forceEffect.perfect) {
+        forceStats.perfectCount++;
+      }
+      if (forceEffect.tooHeavy) {
+        forceStats.tooHeavyCount++;
+      }
+      
+      const consumeResult = await checkAndConsumeMaterial(forceEffect.tooHeavy ? 1.3 : 1);
       if (!consumeResult.success) return;
       
+      const useUV = selectedTool === 'uv_lamp';
       stepsProgress['protect'] = true;
-      addLog('封护', `封护完成，${selectedTool === 'uv_lamp' ? '使用UV固化' : '自然干燥'}`);
+      
+      if (useUV) {
+        toolBonus.uvUsed = true;
+        addLog('工具', '使用UV固化设备，封护效果提升');
+      }
+      
+      forceQualityModifier = Math.min(1.2, forceQualityModifier + forceEffect.qualityDelta * 0.05);
+      
+      addLog('封护', `封护完成，${useUV ? 'UV固化' : '自然干燥'}，力度：${toolForce}，效果：${forceEffect.perfect ? '均匀光滑' : forceEffect.tooHeavy ? '略有流挂' : '正常'}`);
       updateProgress();
-      showNotification('保护层已施加！');
+      showNotification(useUV ? '⚡ UV固化完成！保护层坚固耐用！' : '保护层已施加，正在自然干燥...');
       loadStep(currentStepIndex);
     }
 
@@ -988,6 +1217,19 @@
     async function completeRestoration() {
       const quality = calculateQuality();
       
+      const toolUsedList = [];
+      if (toolBonus.microscopeUsed) toolUsedList.push('🔬 显微镜');
+      if (toolBonus.xrayUsed) toolUsedList.push('📷 X光透视');
+      if (toolBonus.laserUsed) toolUsedList.push('💫 激光清洗机');
+      if (toolBonus.uvUsed) toolUsedList.push('💡 UV固化灯');
+      
+      let forceGrade = '一般';
+      if (forceStats.totalActions > 0) {
+        const perfectRate = forceStats.perfectCount / forceStats.totalActions;
+        if (perfectRate >= 0.7) forceGrade = '优秀';
+        else if (perfectRate >= 0.4) forceGrade = '良好';
+      }
+      
       showModal(`
         <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">🎉 修复完成！</h2>
         <div style="text-align: center; margin-bottom: 20px;">
@@ -999,14 +1241,38 @@
           <p><strong>获得奖励：</strong><span style="color: #d4af37;">💰 ${Math.floor(currentTask.baseReward * quality).toLocaleString()}</span></p>
           <p><strong>获得声望：</strong><span style="color: #d4af37;">⭐ ${Math.floor(currentTask.reputation * quality)}</span></p>
         </div>
+        
+        ${toolUsedList.length > 0 ? `
+        <div style="margin-bottom: 15px; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 6px;">
+          <p style="color: #4caf50; margin-bottom: 5px;"><strong>🛠️ 使用高级工具：</strong></p>
+          <p style="font-size: 13px;">${toolUsedList.join('、')}</p>
+        </div>
+        ` : ''}
+        
+        ${forceStats.totalActions > 0 ? `
+        <div style="margin-bottom: 15px; padding: 10px; background: rgba(212,175,55,0.1); border-radius: 6px;">
+          <p style="color: #d4af37; margin-bottom: 5px;"><strong>⚡ 力度控制评级：${forceGrade}</strong></p>
+          <p style="font-size: 12px; color: #a08060;">
+            完美 ${forceStats.perfectCount} 次 · 过轻 ${forceStats.tooLightCount} 次 · 过重 ${forceStats.tooHeavyCount} 次
+          </p>
+        </div>
+        ` : ''}
+        
+        ${emergencyPenalty > 0 ? `
+        <div style="margin-bottom: 15px; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 6px;">
+          <p style="color: #f44336; margin-bottom: 5px;"><strong>⚠️ 突发事件惩罚：</strong></p>
+          <p style="font-size: 12px;">-${Math.round(emergencyPenalty * 100)}% 质量扣减</p>
+        </div>
+        ` : ''}
+        
         <div style="margin-bottom: 20px;">
           <h4 style="color: #d4af37; margin-bottom: 10px;">📋 修复日志</h4>
-          <div style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+          <div style="max-height: 250px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
             ${restorationLog.map(log => `
               <div style="font-size: 12px; margin-bottom: 5px; padding: 5px; border-bottom: 1px solid #333;">
                 <span style="color: #888;">[${log.time}]</span>
                 <span style="color: #d4af37;">[${log.step}]</span>
-                <span style="color: ${log.category === '⚠️ 突发' ? '#f44336' : '#e8d5b7'};">${log.category}:</span>
+                <span style="color: ${log.category === '⚠️ 突发' ? '#f44336' : log.category === '评分' ? '#4caf50' : log.category === '工具' ? '#2196f3' : '#e8d5b7'};">${log.category}:</span>
                 ${log.text}
               </div>
             `).join('')}
@@ -1019,15 +1285,36 @@
     }
 
     function calculateQuality() {
-      let score = 0.4;
+      let score = 0.35;
       
       const foundCount = damageSpots.filter(s => s.found).length;
-      score += (foundCount / damageSpots.length) * 0.1;
+      const totalSpots = damageSpots.length;
+      score += (foundCount / totalSpots) * 0.12;
+      
+      const microFound = damageSpots.filter(s => s.found && s.microDetail).length;
+      if (microFound > 0) {
+        score += 0.05;
+        addLog('评分', `显微镜发现 ${microFound} 处微观细节，评分 +5%`);
+      }
+      
+      if (toolBonus.microscopeUsed) {
+        score += 0.03;
+        addLog('评分', '使用显微镜观察，精度加成 +3%');
+      }
+      if (toolBonus.xrayUsed) {
+        score += 0.03;
+        addLog('评分', '使用X光透视，发现内部损伤 +3%');
+      }
       
       const cleanedCount = damageSpots.filter(s => s.cleaned).length;
       const foundCleanable = damageSpots.filter(s => s.found).length;
       if (foundCleanable > 0) {
         score += (cleanedCount / foundCleanable) * 0.1;
+      }
+      
+      if (toolBonus.laserUsed) {
+        score += 0.04;
+        addLog('评分', '使用激光清洗机，高效无损 +4%');
       }
       
       const correctPieces = puzzlePieces.filter(p => p.placed && p.correctPos === p.currentPos).length;
@@ -1036,13 +1323,33 @@
       }
       
       const completedSteps = Object.keys(stepsProgress).length;
-      score += (completedSteps / RESTORATION_STEPS.length) * 0.15;
+      score += (completedSteps / RESTORATION_STEPS.length) * 0.12;
       
-      score += forceQualityModifier * 0.1;
+      if (toolBonus.uvUsed) {
+        score += 0.02;
+        addLog('评分', '使用UV固化，封护质量 +2%');
+      }
+      
+      if (forceStats.totalActions > 0) {
+        const perfectRate = forceStats.perfectCount / forceStats.totalActions;
+        const tooLightRate = forceStats.tooLightCount / forceStats.totalActions;
+        const tooHeavyRate = forceStats.tooHeavyCount / forceStats.totalActions;
+        
+        score += perfectRate * 0.08;
+        score -= tooLightRate * 0.05;
+        score -= tooHeavyRate * 0.03;
+        
+        addLog('评分', `力度控制：完美 ${Math.round(perfectRate * 100)}%，过轻 ${Math.round(tooLightRate * 100)}%，过重 ${Math.round(tooHeavyRate * 100)}%`);
+      }
+      
+      score += (forceQualityModifier - 1) * 0.05;
       
       score -= emergencyPenalty;
+      if (emergencyPenalty > 0) {
+        addLog('评分', `突发事件惩罚：-${Math.round(emergencyPenalty * 100)}%`);
+      }
       
-      return Math.min(1, Math.max(0.3, score));
+      return Math.min(1.1, Math.max(0.3, score));
     }
 
     async function confirmComplete(quality) {
