@@ -136,7 +136,7 @@
       }
     }
 
-    function renderCurrentTask() {
+    async function renderCurrentTask() {
       const container = document.getElementById('currentTask');
       
       if (!gameState.currentTask) {
@@ -145,6 +145,9 @@
       }
 
       const task = gameState.currentTask;
+      const reports = await ipcRenderer.invoke('get-lab-reports', task.id);
+      window.currentTaskReports = reports;
+      
       container.innerHTML = `
         <div style="display: flex; gap: 20px;">
           <div style="text-align: center;">
@@ -167,6 +170,15 @@
               </ul>
             </div>
 
+            ${reports.length > 0 ? `
+            <div class="card" style="background: rgba(0,0,0,0.2); margin-bottom: 15px;">
+              <h4 style="color: #d4af37; margin-bottom: 10px;">📄 检测报告 (${reports.length})</h4>
+              ${reports.map((r, i) => `
+                <button class="btn" style="margin: 3px; padding: 3px 10px; font-size: 11px;" onclick="viewCurrentReport(${i})">${r.type}</button>
+              `).join('')}
+            </div>
+            ` : ''}
+
             <div class="card" style="background: rgba(0,0,0,0.2); margin-bottom: 15px;">
               <h4 style="color: #d4af37; margin-bottom: 10px;">✅ 修复要求</h4>
               <ul style="margin-left: 20px;">
@@ -176,6 +188,7 @@
 
             <div style="display: flex; gap: 10px;">
               <button class="btn btn-primary" onclick="goToRestoration()">前往修复台 →</button>
+              <button class="btn" onclick="goToLab()">前往检测室</button>
               <button class="btn btn-danger" onclick="abandonTask()">放弃委托</button>
             </div>
           </div>
@@ -185,6 +198,26 @@
 
     function goToRestoration() {
       ipcRenderer.invoke('open-restoration');
+    }
+
+    function goToLab() {
+      ipcRenderer.invoke('open-lab');
+    }
+
+    async function viewCurrentReport(idx) {
+      const reports = window.currentTaskReports || [];
+      const report = reports[idx];
+      if (!report) return;
+      
+      showModal(`
+        <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📄 ${report.type}</h2>
+        <div class="card" style="background: rgba(0,0,0,0.2);">
+          <pre style="font-size: 13px; white-space: pre-wrap; font-family: inherit;">${report.content}</pre>
+        </div>
+        <div style="text-align: center; margin-top: 20px;">
+          <button class="btn" onclick="closeModal()">关闭</button>
+        </div>
+      `);
     }
 
     async function abandonTask() {
@@ -206,7 +239,7 @@
         return;
       }
 
-      container.innerHTML = completed.map(task => `
+      container.innerHTML = completed.map((task, idx) => `
         <div class="list-item" style="padding: 15px;">
           <div style="display: flex; gap: 15px; flex: 1;">
             <span style="font-size: 48px;">${task.artifact.image}</span>
@@ -219,6 +252,12 @@
               <p style="font-size: 12px; color: #a08060;">
                 完成时间：${new Date(task.completedAt).toLocaleString()}
               </p>
+              <div style="margin-top: 8px; display: flex; gap: 8px;">
+                ${task.restorationLog && task.restorationLog.length > 0 ? 
+                  `<button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewRestorationLog(${idx})">📋 修复日志</button>` : ''}
+                ${task.labReports && task.labReports.length > 0 ? 
+                  `<button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewTaskReports(${idx})">📄 检测报告</button>` : ''}
+              </div>
             </div>
           </div>
           <div style="text-align: right;">
@@ -227,6 +266,61 @@
           </div>
         </div>
       `).join('');
+    }
+
+    function viewRestorationLog(idx) {
+      const task = gameState.completedTasks[idx];
+      if (!task.restorationLog || task.restorationLog.length === 0) return;
+      
+      showModal(`
+        <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📋 修复日志 - ${task.title}</h2>
+        <div style="max-height: 400px; overflow-y: auto;">
+          ${task.restorationLog.map(log => `
+            <div style="font-size: 12px; margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+              <span style="color: #888;">[${log.time}]</span>
+              <span style="color: #d4af37;">[${log.step}]</span>
+              <span style="color: ${log.category === '⚠️ 突发' ? '#f44336' : '#e8d5b7'};">${log.category}:</span>
+              ${log.text}
+            </div>
+          `).join('')}
+        </div>
+        <div style="text-align: center; margin-top: 20px;">
+          <button class="btn" onclick="closeModal()">关闭</button>
+        </div>
+      `);
+    }
+
+    function viewTaskReports(idx) {
+      const task = gameState.completedTasks[idx];
+      if (!task.labReports || task.labReports.length === 0) return;
+      
+      showModal(`
+        <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📄 检测报告 - ${task.title}</h2>
+        <div style="max-height: 400px; overflow-y: auto;">
+          ${task.labReports.map(r => `
+            <div class="card" style="background: rgba(0,0,0,0.2); margin-bottom: 15px;">
+              <h4 style="color: #d4af37; margin-bottom: 10px;">${r.type} - ${new Date(r.timestamp).toLocaleString()}</h4>
+              <pre style="font-size: 12px; white-space: pre-wrap; font-family: inherit;">${r.content}</pre>
+            </div>
+          `).join('')}
+        </div>
+        <div style="text-align: center; margin-top: 20px;">
+          <button class="btn" onclick="closeModal()">关闭</button>
+        </div>
+      `);
+    }
+
+    function showModal(content) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.id = 'archiveModal';
+      modal.innerHTML = `<div class="modal-content">${content}</div>`;
+      modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+      document.body.appendChild(modal);
+    }
+
+    function closeModal() {
+      document.getElementById('archiveModal')?.remove();
     }
 
     function showNotification(message, type = 'success') {

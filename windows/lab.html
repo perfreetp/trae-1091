@@ -17,7 +17,19 @@
   </div>
 
   <div class="main-container">
-    <div class="grid-2">
+    <div id="currentTaskBanner" class="card" style="display: none; background: rgba(212, 175, 55, 0.1); border-color: #d4af37;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <strong style="color: #d4af37;">📋 当前任务：</strong>
+          <span id="currentTaskName">无</span>
+        </div>
+        <div style="font-size: 12px; color: #a08060;">
+          检测结果将自动关联到此任务
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top: 20px;">
       <div class="card">
         <div class="card-title">🏺 选择检测文物</div>
         <div id="artifactList" style="max-height: 500px; overflow-y: auto;"></div>
@@ -71,8 +83,20 @@
     async function init() {
       gameState = await getGameState();
       updateStatus();
+      updateCurrentTaskBanner();
       renderArtifactList();
       renderTestHistory();
+    }
+
+    function updateCurrentTaskBanner() {
+      const banner = document.getElementById('currentTaskBanner');
+      const nameEl = document.getElementById('currentTaskName');
+      if (gameState.currentTask) {
+        banner.style.display = 'block';
+        nameEl.textContent = gameState.currentTask.title + ' - ' + gameState.currentTask.artifact.name;
+      } else {
+        banner.style.display = 'none';
+      }
     }
 
     function updateStatus() {
@@ -150,64 +174,72 @@
 
       showNotification(`${info.name}进行中...`);
 
-      setTimeout(() => {
-        displayTestResult(type);
+      setTimeout(async () => {
+        const report = generateTestReport(type);
+        displayTestResult(report);
         addToHistory(type, info);
-        showNotification(`${info.name}完成！`);
+        
+        if (gameState.currentTask) {
+          await ipcRenderer.invoke('add-lab-report', gameState.currentTask.id, report);
+          showNotification(`${info.name}完成！报告已关联到当前任务`);
+        } else {
+          showNotification(`${info.name}完成！`);
+        }
       }, 2000);
     }
 
-    function displayTestResult(type) {
+    function generateTestReport(type) {
+      const art = selectedArtifact;
+      let content = '';
+      let typeName = '';
+
+      switch (type) {
+        case 'dating':
+          typeName = '年代检测报告';
+          content = `检测物品：${art.name}
+推定年代：${art.era}
+距今时间：${getEraYears(art.era)}
+检测方法：碳14测年法 / 地层学分析
+可信度：95%`;
+          break;
+        case 'material':
+          typeName = '材质分析报告';
+          content = `检测物品：${art.name}
+主要材质：${art.material}
+成分分析：${getMaterialComposition(art.material)}
+硬度：${getMaterialHardness(art.material)}
+保存状态：${getCondition(art)}`;
+          break;
+        case 'xray':
+          typeName = 'X光扫描报告';
+          content = `检测物品：${art.name}
+内部结构：${getInternalStructure(art)}
+隐藏破损：${getHiddenDamage(art)}
+修复痕迹：${getRepairTraces(art)}
+建议：${getRecommendation(art)}`;
+          break;
+      }
+
+      return { type: typeName, content, artifactId: art.id };
+    }
+
+    function displayTestResult(report) {
       const resultEl = document.getElementById('testResult');
       const contentEl = document.getElementById('resultContent');
       resultEl.style.display = 'block';
 
-      let content = '';
-      const art = selectedArtifact;
-
-      switch (type) {
-        case 'dating':
-          content = `
-            <h4 style="color: #d4af37; margin-bottom: 10px;">📅 年代检测报告</h4>
-            <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
-              <div class="scan-line"></div>
-              <p><strong>检测物品：</strong>${art.name}</p>
-              <p><strong>推定年代：</strong><span style="color: #4caf50;">${art.era}</span></p>
-              <p><strong>距今时间：</strong>${getEraYears(art.era)}</p>
-              <p><strong>检测方法：</strong>碳14测年法 / 地层学分析</p>
-              <p><strong>可信度：</strong>95%</p>
-            </div>
-          `;
-          break;
-        case 'material':
-          content = `
-            <h4 style="color: #d4af37; margin-bottom: 10px;">🔍 材质分析报告</h4>
-            <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
-              <div class="scan-line"></div>
-              <p><strong>检测物品：</strong>${art.name}</p>
-              <p><strong>主要材质：</strong><span style="color: #4caf50;">${art.material}</span></p>
-              <p><strong>成分分析：</strong>${getMaterialComposition(art.material)}</p>
-              <p><strong>硬度：</strong>${getMaterialHardness(art.material)}</p>
-              <p><strong>保存状态：</strong>${getCondition(art)}</p>
-            </div>
-          `;
-          break;
-        case 'xray':
-          content = `
-            <h4 style="color: #d4af37; margin-bottom: 10px;">📷 X光扫描报告</h4>
-            <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
-              <div class="scan-line"></div>
-              <p><strong>检测物品：</strong>${art.name}</p>
-              <p><strong>内部结构：</strong>${getInternalStructure(art)}</p>
-              <p><strong>隐藏破损：</strong>${getHiddenDamage(art)}</p>
-              <p><strong>修复痕迹：</strong>${getRepairTraces(art)}</p>
-              <p><strong>建议：</strong>${getRecommendation(art)}</p>
-            </div>
-          `;
-          break;
-      }
-
-      contentEl.innerHTML = content;
+      contentEl.innerHTML = `
+        <h4 style="color: #d4af37; margin-bottom: 10px;">� ${report.type}</h4>
+        <div style="position: relative; padding: 20px; background: #1a0f0a; border-radius: 8px; overflow: hidden;">
+          <div class="scan-line"></div>
+          <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px;">${report.content}</pre>
+        </div>
+        ${gameState.currentTask ? 
+          `<p style="margin-top: 10px; color: #4caf50; font-size: 12px; text-align: center;">✅ 已自动关联到当前任务：${gameState.currentTask.title}</p>` 
+          : 
+          `<p style="margin-top: 10px; color: #ff9800; font-size: 12px; text-align: center;">⚠️ 无进行中的任务，报告未关联</p>`
+        }
+      `;
     }
 
     function getEraYears(era) {

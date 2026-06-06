@@ -32,7 +32,10 @@
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-title">🏺 当前文物</div>
+          <div class="card-title">
+            🏺 当前文物
+            <button class="btn" style="float: right; padding: 3px 10px; font-size: 11px;" onclick="showLabReports()">📄 检测报告</button>
+          </div>
           <div id="artifactInfo"></div>
         </div>
 
@@ -48,16 +51,28 @@
             </div>
           </div>
           <div id="stepsList"></div>
+          <div style="margin-top: 10px;">
+            <p style="font-size: 12px; color: #a08060; margin-bottom: 5px;">材料库存：</p>
+            <div id="materialStatus" style="display: flex; gap: 10px; flex-wrap: wrap;"></div>
+          </div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">🛠️ 工具栏</div>
+        <div class="card-title">
+          🛠️ 工具栏
+          <span style="float: right; font-size: 12px; color: #a08060;">当前材料消耗：<span id="currentCost">无</span></span>
+        </div>
         <div class="toolbar" id="toolbar"></div>
         <div class="slider-container" style="margin-top: 15px;">
           <label>工具力度</label>
           <input type="range" id="forceSlider" min="1" max="10" value="5">
           <span id="forceValue">5</span>
+          <span id="forceHint" style="margin-left: 15px; font-size: 11px; color: #a08060;">适中</span>
+        </div>
+        <div id="materialSelect" style="margin-top: 15px; display: none;">
+          <p style="font-size: 12px; color: #a08060; margin-bottom: 8px;">选择使用材料：</p>
+          <div id="materialOptions" style="display: flex; gap: 10px; flex-wrap: wrap;"></div>
         </div>
       </div>
 
@@ -74,11 +89,16 @@
         </div>
       </div>
 
+      <div id="emergencyPanel" class="card" style="display: none; border-color: #f44336;">
+        <div class="card-title" style="color: #f44336;">⚠️ 突发情况！</div>
+        <div id="emergencyContent"></div>
+      </div>
+
       <div style="text-align: center; margin-top: 20px;">
+        <button class="btn" onclick="prevStep()" id="prevStepBtn" style="display: none; margin-right: 10px;">← 上一步</button>
         <button class="btn btn-primary" id="nextStepBtn" onclick="nextStep()" style="display: none;">下一步 →</button>
-        <button class="btn" onclick="prevStep()" style="display: none; margin-right: 10px;">← 上一步</button>
         <button class="btn btn-primary" id="completeBtn" onclick="completeRestoration()" style="display: none;">✅ 完成修复</button>
-        <button class="btn btn-danger" onclick="cancelTask()">❌ 放弃任务</button>
+        <button class="btn btn-danger" onclick="cancelTask()" style="margin-left: 10px;">❌ 放弃任务</button>
       </div>
     </div>
   </div>
@@ -94,40 +114,133 @@
     let zoomLevel = 1;
     let toolForce = 5;
     let selectedTool = null;
+    let selectedMaterial = null;
     let stepsProgress = {};
     let damageSpots = [];
     let puzzlePieces = [];
     let restorationLog = [];
+    let gameState = null;
+    let currentEmergency = null;
+    let usedMaterials = {};
+    let forceQualityModifier = 1;
+    let emergencyPenalty = 0;
 
     const RESTORATION_STEPS = [
-      { id: 'observe', name: '观察', icon: '👁️', desc: '仔细观察文物，记录破损情况' },
-      { id: 'clean', name: '清洁', icon: '🧹', desc: '清理表面污渍和锈蚀' },
-      { id: 'assemble', name: '拼合', icon: '🧩', desc: '拼接破碎的碎片' },
-      { id: 'fill', name: '补配', icon: '🔨', desc: '填补缺失部分' },
-      { id: 'color', name: '上色', icon: '🎨', desc: '调配颜料进行全色' },
-      { id: 'protect', name: '封护', icon: '🛡️', desc: '施加保护层' }
+      { id: 'observe', name: '观察', icon: '👁️', desc: '仔细观察文物，记录破损情况', consume: null },
+      { id: 'clean', name: '清洁', icon: '🧹', desc: '清理表面污渍和锈蚀', consume: 'clean' },
+      { id: 'assemble', name: '拼合', icon: '🧩', desc: '拼接破碎的碎片', consume: 'assemble' },
+      { id: 'fill', name: '补配', icon: '🔨', desc: '填补缺失部分', consume: 'fill' },
+      { id: 'color', name: '上色', icon: '🎨', desc: '调配颜料进行全色', consume: 'color' },
+      { id: 'protect', name: '封护', icon: '🛡️', desc: '施加保护层', consume: 'protect' }
     ];
 
+    const EMERGENCY_TYPES = {
+      clean: [
+        { 
+          id: 'crack', 
+          name: '出现新裂纹！', 
+          desc: '清洁力度过大导致文物表面出现细微裂纹',
+          options: [
+            { text: '使用柔性填充剂修补', cost: { material: 'softFiller', amount: 1 }, effect: '补救成功，轻微影响' },
+            { text: '忽略继续', cost: null, effect: '严重影响修复质量' }
+          ]
+        }
+      ],
+      assemble: [
+        {
+          id: 'misalign',
+          name: '碎片错位！',
+          desc: '拼接位置不准确，可能影响整体结构',
+          options: [
+            { text: '拆开重新拼接', cost: { material: 'adhesive', amount: 1 }, effect: '补救成功，消耗额外粘合剂' },
+            { text: '强行固定', cost: null, effect: '修复质量下降' }
+          ]
+        }
+      ],
+      color: [
+        {
+          id: 'color_diff',
+          name: '色差过大！',
+          desc: '颜料调配不当，与原色差异明显',
+          options: [
+            { text: '使用颜料清除剂去除', cost: { material: 'paintRemover', amount: 1 }, effect: '清除后重新上色' },
+            { text: '尝试叠色修正', cost: { material: 'pigment', amount: 1 }, effect: '效果一般，勉强接受' }
+          ]
+        }
+      ]
+    };
+
     async function init() {
-      const state = await getGameState();
-      updateStatus(state);
+      gameState = await getGameState();
+      updateStatus();
       
-      if (state.currentTask) {
-        loadTask(state.currentTask);
+      if (gameState.currentTask) {
+        loadTask(gameState.currentTask);
       } else {
         loadQuickTasks();
       }
+
+      document.getElementById('forceSlider').addEventListener('input', (e) => {
+        toolForce = parseInt(e.target.value);
+        document.getElementById('forceValue').textContent = toolForce;
+        updateForceHint();
+      });
     }
 
-    function updateStatus(state) {
-      document.getElementById('budget').textContent = state.budget.toLocaleString();
+    function updateStatus() {
+      document.getElementById('budget').textContent = gameState.budget.toLocaleString();
+      updateMaterialStatus();
+    }
+
+    function updateForceHint() {
+      const hintEl = document.getElementById('forceHint');
+      if (toolForce <= 2) {
+        hintEl.textContent = '过轻 - 进度缓慢';
+        hintEl.style.color = '#2196f3';
+      } else if (toolForce <= 4) {
+        hintEl.textContent = '较轻 - 安全范围';
+        hintEl.style.color = '#4caf50';
+      } else if (toolForce <= 6) {
+        hintEl.textContent = '适中 - 推荐';
+        hintEl.style.color = '#4caf50';
+      } else if (toolForce <= 8) {
+        hintEl.textContent = '较重 - 注意风险';
+        hintEl.style.color = '#ff9800';
+      } else {
+        hintEl.textContent = '过重 - 高风险！';
+        hintEl.style.color = '#f44336';
+      }
+    }
+
+    function updateMaterialStatus() {
+      const container = document.getElementById('materialStatus');
+      if (!container) return;
+      const materialsInfo = getMaterialsInfo();
+      const stepCost = getStepMaterialCost();
+      const currentStep = RESTORATION_STEPS[currentStepIndex];
+      
+      if (currentStep.consume && stepCost[currentStep.consume]) {
+        const cost = stepCost[currentStep.consume];
+        const mainMat = gameState.materials[cost.material] || 0;
+        const altMat = cost.alt ? (gameState.materials[cost.alt] || 0) : null;
+        
+        let html = `<span style="font-size: 11px;">${materialsInfo[cost.material]?.name}: ${mainMat}</span>`;
+        if (altMat !== null) {
+          html += `<span style="font-size: 11px; color: #d4af37;">${materialsInfo[cost.alt]?.name}: ${altMat}</span>`;
+        }
+        container.innerHTML = html;
+      } else {
+        container.innerHTML = '<span style="font-size: 11px; color: #a08060;">本步骤无需耗材</span>';
+      }
     }
 
     function loadQuickTasks() {
       const tasks = getTasks();
       const container = document.getElementById('quickTasks');
       container.innerHTML = '';
-      tasks.forEach(task => {
+      const completedIds = gameState.completedTasks.map(t => t.id);
+      
+      tasks.filter(t => !completedIds.includes(t.id)).forEach(task => {
         const card = document.createElement('div');
         card.className = 'item-card';
         card.style.cursor = 'pointer';
@@ -152,8 +265,13 @@
       currentStepIndex = 0;
       stepsProgress = {};
       restorationLog = [];
+      usedMaterials = {};
+      emergencyPenalty = 0;
+      forceQualityModifier = 1;
+      currentEmergency = null;
       await ipcRenderer.invoke('set-current-task', task);
       loadTask(task);
+      addLog('系统', '开始修复任务：' + task.title);
       showNotification('任务已开始：' + task.title);
     }
 
@@ -199,15 +317,21 @@
 
     function renderStepsList() {
       const container = document.getElementById('stepsList');
-      container.innerHTML = RESTORATION_STEPS.map((step, i) => `
+      container.innerHTML = RESTORATION_STEPS.map((step, i) => {
+        const stepCost = getStepMaterialCost();
+        const cost = step.consume ? stepCost[step.consume] : null;
+        const matInfo = cost ? getMaterialsInfo()[cost.material] : null;
+        
+        return `
         <div class="list-item" style="opacity: ${i <= currentStepIndex ? 1 : 0.5}">
           <div>
             <span>${step.icon} ${step.name}</span>
             <span style="color: #a08060; font-size: 12px; margin-left: 10px;">${step.desc}</span>
+            ${matInfo ? `<span style="color: #ff9800; font-size: 10px; margin-left: 10px;">消耗: ${matInfo.name} x${cost.amount}</span>` : ''}
           </div>
           <span>${stepsProgress[step.id] ? '✅' : i === currentStepIndex ? '⏳' : '⬜'}</span>
         </div>
-      `).join('');
+      `}).join('');
     }
 
     function updateProgress() {
@@ -223,15 +347,29 @@
       const step = RESTORATION_STEPS[index];
       document.getElementById('currentStep').textContent = step.name;
       document.getElementById('workAreaTitle').textContent = step.name + ' - ' + step.desc;
+      document.getElementById('currentCost').textContent = step.consume ? getConsumeText(step.consume) : '无';
       
       renderStepsIndicator();
       renderStepsList();
       renderToolbar(step.id);
+      renderMaterialSelect(step.id);
       renderWorkArea(step.id);
+      updateMaterialStatus();
       
-      document.getElementById('prevStepBtn').style.display = index > 0 ? 'inline-block' : 'none';
-      document.getElementById('nextStepBtn').style.display = index < RESTORATION_STEPS.length - 1 && stepsProgress[step.id] ? 'inline-block' : 'none';
-      document.getElementById('completeBtn').style.display = index === RESTORATION_STEPS.length - 1 && stepsProgress[step.id] ? 'inline-block' : 'none';
+      document.getElementById('prevStepBtn').style.display = index > 0 && !currentEmergency ? 'inline-block' : 'none';
+      document.getElementById('nextStepBtn').style.display = index < RESTORATION_STEPS.length - 1 && stepsProgress[step.id] && !currentEmergency ? 'inline-block' : 'none';
+      document.getElementById('completeBtn').style.display = index === RESTORATION_STEPS.length - 1 && stepsProgress[step.id] && !currentEmergency ? 'inline-block' : 'none';
+    }
+
+    function getConsumeText(consumeKey) {
+      const stepCost = getStepMaterialCost();
+      const cost = stepCost[consumeKey];
+      const materialsInfo = getMaterialsInfo();
+      let text = materialsInfo[cost.material]?.name + ' x' + cost.amount;
+      if (cost.alt) {
+        text += ' / ' + materialsInfo[cost.alt]?.name;
+      }
+      return text;
     }
 
     function renderToolbar(stepId) {
@@ -244,37 +382,39 @@
           <span class="tool-icon">${tool.icon}</span>
           <span class="tool-name">${tool.name}</span>
           ${!tool.unlocked ? '<span style="font-size: 10px; color: #f44;">🔒</span>' : ''}
+          ${tool.bonus ? `<span style="font-size: 10px; color: #4caf50;">+${tool.bonus}</span>` : ''}
         </button>
       `).join('');
     }
 
     function getAvailableTools(stepId) {
-      const state = ipcRenderer.invoke ? null : null;
+      const tools = gameState.tools;
       const toolMap = {
         observe: [
-          { id: 'magnifier', name: '放大镜', icon: '🔍', unlocked: true },
-          { id: 'microscope', name: '显微镜', icon: '🔬', unlocked: false }
+          { id: 'magnifier', name: '放大镜', icon: '🔍', unlocked: true, bonus: null },
+          { id: 'microscope', name: '显微镜', icon: '🔬', unlocked: tools.microscope?.unlocked, bonus: '精度+20%' },
+          { id: 'xray', name: 'X光透视', icon: '📷', unlocked: tools.xrayMachine?.unlocked, bonus: '发现隐藏损伤' }
         ],
         clean: [
-          { id: 'brush', name: '软毛刷', icon: '🖌️', unlocked: true },
-          { id: 'sponge', name: '海绵', icon: '🧽', unlocked: true },
-          { id: 'laser', name: '激光清洗', icon: '💫', unlocked: false }
+          { id: 'brush', name: '软毛刷', icon: '🖌️', unlocked: true, bonus: null },
+          { id: 'sponge', name: '海绵', icon: '🧽', unlocked: true, bonus: null },
+          { id: 'laser', name: '激光清洗', icon: '💫', unlocked: tools.laserCleaner?.unlocked, bonus: '无损+30%' }
         ],
         assemble: [
-          { id: 'tweezers', name: '镊子', icon: '🗜️', unlocked: true },
-          { id: 'adhesive', name: '粘合剂', icon: '🧴', unlocked: true }
+          { id: 'tweezers', name: '镊子', icon: '🗜️', unlocked: true, bonus: null },
+          { id: 'adhesive_tool', name: '粘合剂', icon: '🧴', unlocked: true, bonus: null }
         ],
         fill: [
-          { id: 'spatula', name: '刮刀', icon: '🥄', unlocked: true },
-          { id: 'filler', name: '填充剂', icon: '🧱', unlocked: true }
+          { id: 'spatula', name: '刮刀', icon: '🥄', unlocked: true, bonus: null },
+          { id: 'filler_tool', name: '填充剂', icon: '🧱', unlocked: true, bonus: null }
         ],
         color: [
-          { id: 'brush', name: '画笔', icon: '🖌️', unlocked: true },
-          { id: 'palette', name: '调色板', icon: '🎨', unlocked: true }
+          { id: 'paint_brush', name: '画笔', icon: '🖌️', unlocked: true, bonus: null },
+          { id: 'palette', name: '调色板', icon: '🎨', unlocked: true, bonus: null }
         ],
         protect: [
-          { id: 'spray', name: '喷枪', icon: '🧴', unlocked: true },
-          { id: 'varnish', name: '保护漆', icon: '💧', unlocked: true }
+          { id: 'spray', name: '喷枪', icon: '🧴', unlocked: true, bonus: null },
+          { id: 'uv_lamp', name: 'UV固化', icon: '💡', unlocked: tools.uvLamp?.unlocked, bonus: '固化+25%' }
         ]
       };
       return toolMap[stepId] || [];
@@ -282,15 +422,99 @@
 
     function selectTool(toolId) {
       selectedTool = toolId;
-      renderToolbar(RESTORATION_STEPS[currentStepIndex].id);
+      const stepId = RESTORATION_STEPS[currentStepIndex].id;
+      renderToolbar(stepId);
+      showNotification('已选择工具');
+    }
+
+    function renderMaterialSelect(stepId) {
+      const container = document.getElementById('materialSelect');
+      const optionsContainer = document.getElementById('materialOptions');
+      const stepCost = getStepMaterialCost();
+      const materialsInfo = getMaterialsInfo();
+      
+      const step = RESTORATION_STEPS.find(s => s.id === stepId);
+      
+      if (step.consume && stepCost[step.consume]) {
+        const cost = stepCost[step.consume];
+        container.style.display = 'block';
+        
+        let options = [];
+        
+        if (cost.alt && gameState.materials[cost.alt] > 0) {
+          options.push(`
+            <button class="btn ${selectedMaterial === cost.alt ? 'btn-primary' : ''}" 
+                    style="padding: 5px 12px; font-size: 12px;"
+                    onclick="selectMaterial('${cost.alt}')">
+              ✨ ${materialsInfo[cost.alt]?.name} (${gameState.materials[cost.alt]})
+            </button>
+          `);
+        }
+        
+        options.push(`
+          <button class="btn ${selectedMaterial === cost.material || (!cost.alt && !selectedMaterial) ? 'btn-primary' : ''}" 
+                  style="padding: 5px 12px; font-size: 12px;"
+                  onclick="selectMaterial('${cost.material}')">
+            📦 ${materialsInfo[cost.material]?.name} (${gameState.materials[cost.material] || 0})
+          </button>
+        `);
+        
+        optionsContainer.innerHTML = options.join('');
+      } else {
+        container.style.display = 'none';
+      }
+    }
+
+    function selectMaterial(matKey) {
+      selectedMaterial = matKey;
+      const stepId = RESTORATION_STEPS[currentStepIndex].id;
+      renderMaterialSelect(stepId);
+    }
+
+    async function checkAndConsumeMaterial() {
+      const step = RESTORATION_STEPS[currentStepIndex];
+      if (!step.consume) return { success: true };
+      
+      const stepCost = getStepMaterialCost();
+      const cost = stepCost[step.consume];
+      
+      let matToUse = selectedMaterial || cost.material;
+      
+      if (cost.alt && matToUse === cost.alt) {
+        if (gameState.materials[cost.alt] > 0) {
+          const result = await ipcRenderer.invoke('use-material', cost.alt, 1);
+          if (result.success) {
+            gameState.materials = result.materials;
+            usedMaterials[cost.alt] = (usedMaterials[cost.alt] || 0) + 1;
+            addLog('材料', `使用 ${getMaterialsInfo()[cost.alt]?.name} x1`);
+            return { success: true, bonus: true };
+          }
+        }
+      }
+      
+      if (gameState.materials[cost.material] < cost.amount) {
+        showNotification(`材料不足：${getMaterialsInfo()[cost.material]?.name}，请前往材料柜购买！`, 'error');
+        return { success: false };
+      }
+      
+      const result = await ipcRenderer.invoke('use-material', cost.material, cost.amount);
+      if (result.success) {
+        gameState.materials = result.materials;
+        usedMaterials[cost.material] = (usedMaterials[cost.material] || 0) + cost.amount;
+        addLog('材料', `使用 ${getMaterialsInfo()[cost.material]?.name} x${cost.amount}`);
+        updateStatus();
+        return { success: true };
+      }
+      
+      return { success: false };
     }
 
     function renderWorkArea(stepId) {
       const area = document.getElementById('restorationArea');
       const artifact = currentTask.artifact;
       
-      document.getElementById('artifactDisplay').className = 'artifact-display zoom-' + zoomLevel;
-      document.getElementById('artifactDisplay').innerHTML = artifact.image;
+      document.getElementById('artifactDisplay')?.classList.remove('zoom-1', 'zoom-2', 'zoom-3');
+      document.getElementById('artifactDisplay')?.classList.add('zoom-' + zoomLevel);
 
       if (stepId === 'observe') {
         renderObserveArea(area);
@@ -309,7 +533,7 @@
 
     function renderObserveArea(area) {
       if (damageSpots.length === 0) {
-        damageSpots = generateDamageSpots(5);
+        damageSpots = generateDamageSpots(5 + (selectedTool === 'xray' ? 2 : 0));
       }
       let spotsHtml = damageSpots.map((spot, i) => `
         <div class="damage-spot ${spot.found ? 'cleaned' : ''}" 
@@ -328,10 +552,12 @@
       
       setTimeout(() => {
         if (damageSpots.filter(s => s.found).length >= 3) {
-          stepsProgress['observe'] = true;
-          addLog('观察完成，发现 ' + damageSpots.filter(s => s.found).length + ' 处破损');
-          updateProgress();
-          loadStep(currentStepIndex);
+          if (!stepsProgress['observe']) {
+            stepsProgress['observe'] = true;
+            addLog('观察', `发现 ${damageSpots.filter(s => s.found).length} 处破损点`);
+            updateProgress();
+            loadStep(currentStepIndex);
+          }
         }
       }, 100);
     }
@@ -343,28 +569,37 @@
           x: 10 + Math.random() * 80,
           y: 10 + Math.random() * 80,
           found: false,
-          cleaned: false
+          cleaned: false,
+          hidden: i >= 5
         });
       }
       return spots;
     }
 
     function findDamage(index) {
+      if (damageSpots[index].hidden && selectedTool !== 'xray') {
+        showNotification('需要X光设备才能发现此隐藏损伤！', 'error');
+        return;
+      }
       if (!damageSpots[index].found) {
         damageSpots[index].found = true;
-        showNotification('发现破损点！');
+        showNotification(damageSpots[index].hidden ? '发现隐藏损伤！' : '发现破损点！');
+        addLog('观察', `发现破损点 #${index + 1}${damageSpots[index].hidden ? ' (隐藏)' : ''}`);
         renderWorkArea('observe');
       }
     }
 
-    function renderCleanArea(area) {
-      let spotsHtml = damageSpots.map((spot, i) => `
+    async function renderCleanArea(area) {
+      const foundSpots = damageSpots.filter(s => s.found);
+      let spotsHtml = foundSpots.map((spot, i) => {
+        const originalIndex = damageSpots.indexOf(spot);
+        return `
         <div class="damage-spot ${spot.cleaned ? 'cleaned' : ''}" 
              style="left: ${spot.x}%; top: ${spot.y}%; background: ${spot.cleaned ? 'rgba(46,125,50,0.3)' : 'rgba(139,69,19,0.6)'}"
-             onclick="cleanDamage(${i})"
+             onclick="cleanDamage(${originalIndex})"
              title="${spot.cleaned ? '已清洁' : '点击清洁'}">
         </div>
-      `).join('');
+      `}).join('');
       
       area.innerHTML = `
         <div id="artifactDisplay" class="artifact-display zoom-${zoomLevel}">
@@ -374,28 +609,119 @@
       `;
       
       setTimeout(() => {
-        if (damageSpots.filter(s => s.cleaned).length >= 3) {
-          stepsProgress['clean'] = true;
-          addLog('清洁完成');
-          updateProgress();
-          loadStep(currentStepIndex);
+        if (foundSpots.filter(s => s.cleaned).length >= 3) {
+          if (!stepsProgress['clean']) {
+            stepsProgress['clean'] = true;
+            addLog('清洁', `完成清洁，处理 ${foundSpots.filter(s => s.cleaned).length} 处污渍`);
+            updateProgress();
+            loadStep(currentStepIndex);
+          }
         }
       }, 100);
     }
 
-    function cleanDamage(index) {
+    async function cleanDamage(index) {
       if (!selectedTool) {
         showNotification('请先选择工具！', 'error');
         return;
       }
-      if (!damageSpots[index].cleaned) {
-        damageSpots[index].cleaned = true;
-        showNotification('清洁成功！');
-        renderWorkArea('clean');
+      
+      if (damageSpots[index].cleaned) return;
+      
+      const consumeResult = await checkAndConsumeMaterial();
+      if (!consumeResult.success) return;
+      
+      const forceEffect = calculateForceEffect();
+      
+      if (forceEffect.risk && Math.random() < 0.3 && !currentEmergency) {
+        triggerEmergency('clean');
+        return;
+      }
+      
+      let qualityBonus = 1;
+      if (selectedTool === 'laser') qualityBonus += 0.1;
+      if (consumeResult.bonus) qualityBonus += 0.1;
+      
+      damageSpots[index].cleaned = true;
+      forceQualityModifier = Math.min(1.2, forceQualityModifier + forceEffect.qualityDelta * 0.05);
+      
+      showNotification(forceEffect.qualityDelta > 0 ? '清洁完美！' : '清洁完成');
+      addLog('清洁', `清洁破损点 #${index + 1}，力度：${toolForce}`);
+      
+      renderWorkArea('clean');
+      updateStatus();
+    }
+
+    function calculateForceEffect() {
+      if (toolForce <= 2) {
+        return { risk: false, qualityDelta: 0, slow: true };
+      } else if (toolForce <= 4) {
+        return { risk: false, qualityDelta: 0.5 };
+      } else if (toolForce <= 6) {
+        return { risk: false, qualityDelta: 1 };
+      } else if (toolForce <= 8) {
+        return { risk: true, qualityDelta: 0.5 };
+      } else {
+        return { risk: true, qualityDelta: -0.5 };
       }
     }
 
-    function renderAssembleArea(area) {
+    function triggerEmergency(stepId) {
+      const emergencies = EMERGENCY_TYPES[stepId];
+      if (!emergencies || emergencies.length === 0) return;
+      
+      currentEmergency = emergencies[Math.floor(Math.random() * emergencies.length)];
+      addLog('⚠️ 突发', currentEmergency.name + ' - ' + currentEmergency.desc);
+      
+      const panel = document.getElementById('emergencyPanel');
+      const content = document.getElementById('emergencyContent');
+      
+      content.innerHTML = `
+        <h3 style="color: #f44336; margin-bottom: 10px;">${currentEmergency.name}</h3>
+        <p style="margin-bottom: 15px;">${currentEmergency.desc}</p>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+          ${currentEmergency.options.map((opt, i) => `
+            <button class="btn ${i === 0 ? 'btn-primary' : ''}" onclick="handleEmergencyOption(${i})">
+              ${opt.text}
+              ${opt.cost ? `<span style="font-size: 10px; margin-left: 5px;">(${getMaterialsInfo()[opt.cost.material]?.name} x${opt.cost.amount})</span>` : ''}
+            </button>
+          `).join('')}
+        </div>
+      `;
+      
+      panel.style.display = 'block';
+      document.getElementById('nextStepBtn').style.display = 'none';
+      document.getElementById('completeBtn').style.display = 'none';
+      document.getElementById('prevStepBtn').style.display = 'none';
+      
+      showNotification('⚠️ ' + currentEmergency.name, 'error');
+    }
+
+    async function handleEmergencyOption(optionIndex) {
+      const option = currentEmergency.options[optionIndex];
+      
+      if (option.cost) {
+        if ((gameState.materials[option.cost.material] || 0) < option.cost.amount) {
+          showNotification(`材料不足：${getMaterialsInfo()[option.cost.material]?.name}`, 'error');
+          return;
+        }
+        await ipcRenderer.invoke('use-material', option.cost.material, option.cost.amount);
+        gameState = await getGameState();
+        usedMaterials[option.cost.material] = (usedMaterials[option.cost.material] || 0) + option.cost.amount;
+        emergencyPenalty += 0.02;
+        addLog('补救', `${option.text} - 成功`);
+      } else {
+        emergencyPenalty += 0.1;
+        addLog('补救', `${option.text} - 质量下降`);
+      }
+      
+      currentEmergency = null;
+      document.getElementById('emergencyPanel').style.display = 'none';
+      loadStep(currentStepIndex);
+      updateStatus();
+    }
+
+    async function renderAssembleArea(area) {
       if (puzzlePieces.length === 0) {
         puzzlePieces = [
           { id: 0, name: '碎片A', placed: false, correctPos: 0 },
@@ -407,8 +733,8 @@
       
       const unplaced = puzzlePieces.filter(p => !p.placed);
       const slots = [0, 1, 2, 3].map(i => {
-        const placed = puzzlePieces.find(p => p.placed && p.correctPos === i);
-        return placed ? `<div class="puzzle-piece placed">✅ ${placed.name}</div>` : `<div class="empty-slot" onclick="placePiece(${i})">空位 ${i + 1}</div>`;
+        const placed = puzzlePieces.find(p => p.placed && p.currentPos === i);
+        return placed ? `<div class="puzzle-piece placed">${placed.correctPos === i ? '✅' : '⚠️'} ${placed.name}</div>` : `<div class="empty-slot" onclick="placePiece(${i})">空位 ${i + 1}</div>`;
       }).join('');
       
       area.innerHTML = `
@@ -425,31 +751,49 @@
       
       setTimeout(() => {
         if (puzzlePieces.every(p => p.placed)) {
-          stepsProgress['assemble'] = true;
-          addLog('拼合完成');
-          updateProgress();
-          loadStep(currentStepIndex);
+          if (!stepsProgress['assemble']) {
+            const correctCount = puzzlePieces.filter(p => p.correctPos === p.currentPos).length;
+            stepsProgress['assemble'] = true;
+            addLog('拼合', `完成拼接，正确定位 ${correctCount}/${puzzlePieces.length} 块碎片`);
+            if (correctCount < puzzlePieces.length) {
+              emergencyPenalty += 0.05 * (puzzlePieces.length - correctCount);
+            }
+            updateProgress();
+            loadStep(currentStepIndex);
+          }
         }
       }, 100);
     }
 
     let selectedPiece = null;
-    function selectPiece(id) {
+    async function selectPiece(id) {
       selectedPiece = id;
       showNotification('已选择碎片，点击空位放置');
+      
+      if (toolForce >= 8 && Math.random() < 0.2 && !currentEmergency) {
+        const consumeResult = await checkAndConsumeMaterial();
+        if (consumeResult.success) {
+          triggerEmergency('assemble');
+        }
+      }
     }
 
-    function placePiece(pos) {
+    async function placePiece(pos) {
       if (selectedPiece === null) {
         showNotification('请先选择碎片！', 'error');
         return;
       }
+      
+      const consumeResult = await checkAndConsumeMaterial();
+      if (!consumeResult.success) return;
+      
       const piece = puzzlePieces.find(p => p.id === selectedPiece);
       if (piece && !piece.placed) {
         piece.placed = true;
         piece.currentPos = pos;
         selectedPiece = null;
         showNotification('碎片已放置！');
+        addLog('拼合', `放置 ${piece.name} 到位置 ${pos + 1}`);
         renderWorkArea('assemble');
       }
     }
@@ -476,18 +820,32 @@
       }, 100);
     }
 
-    function applyFill() {
+    async function applyFill() {
       const amount = parseInt(document.getElementById('fillAmount').value);
+      
+      const consumeResult = await checkAndConsumeMaterial();
+      if (!consumeResult.success) return;
+      
+      if (toolForce <= 2) {
+        showNotification('力度太轻，填充不实！', 'error');
+        return;
+      }
+      
       if (amount >= 70 && amount <= 90) {
         stepsProgress['fill'] = true;
-        addLog('补配完成，填充量：' + amount + '%');
+        addLog('补配', `填充完成，填充量：${amount}%，力度：${toolForce}`);
         updateProgress();
         showNotification('填充完美！');
         loadStep(currentStepIndex);
       } else if (amount < 70) {
         showNotification('填充不足，请增加填充量', 'error');
       } else {
-        showNotification('填充过多，请减少填充量', 'error');
+        if (toolForce >= 7) {
+          showNotification('填充过多且力度过大，可能造成损伤！', 'error');
+          emergencyPenalty += 0.03;
+        } else {
+          showNotification('填充过多，请减少填充量', 'error');
+        }
       }
     }
 
@@ -515,13 +873,22 @@
       el.style.borderColor = '#d4af37';
     }
 
-    function applyColor() {
+    async function applyColor() {
       if (!selectedColor) {
         showNotification('请先选择颜色！', 'error');
         return;
       }
+      
+      const consumeResult = await checkAndConsumeMaterial();
+      if (!consumeResult.success) return;
+      
+      if (toolForce >= 9 && Math.random() < 0.25 && !currentEmergency) {
+        triggerEmergency('color');
+        return;
+      }
+      
       stepsProgress['color'] = true;
-      addLog('上色完成，使用颜色：' + selectedColor);
+      addLog('上色', `上色完成，颜色：${selectedColor}，力度：${toolForce}`);
       updateProgress();
       showNotification('上色完成！');
       loadStep(currentStepIndex);
@@ -537,15 +904,19 @@
               <span class="mixture">🛡️</span>
             </div>
             <p style="color: #a08060;">保护漆准备就绪</p>
+            ${selectedTool === 'uv_lamp' ? '<p style="color: #4caf50; font-size: 12px;">✨ 使用UV固化设备</p>' : ''}
           </div>
           <button class="btn btn-primary" onclick="applyProtection()">施加保护层</button>
         </div>
       `;
     }
 
-    function applyProtection() {
+    async function applyProtection() {
+      const consumeResult = await checkAndConsumeMaterial();
+      if (!consumeResult.success) return;
+      
       stepsProgress['protect'] = true;
-      addLog('封护完成');
+      addLog('封护', `封护完成，${selectedTool === 'uv_lamp' ? '使用UV固化' : '自然干燥'}`);
       updateProgress();
       showNotification('保护层已施加！');
       loadStep(currentStepIndex);
@@ -553,13 +924,9 @@
 
     function changeZoom(delta) {
       zoomLevel = Math.max(1, Math.min(3, zoomLevel + delta));
-      renderWorkArea(RESTORATION_STEPS[currentStepIndex].id);
+      const stepId = RESTORATION_STEPS[currentStepIndex].id;
+      renderWorkArea(stepId);
     }
-
-    document.getElementById('forceSlider')?.addEventListener('input', (e) => {
-      toolForce = parseInt(e.target.value);
-      document.getElementById('forceValue').textContent = toolForce;
-    });
 
     function nextStep() {
       if (currentStepIndex < RESTORATION_STEPS.length - 1) {
@@ -573,13 +940,53 @@
       }
     }
 
-    function addLog(text) {
-      restorationLog.push({ step: RESTORATION_STEPS[currentStepIndex].name, text, time: new Date().toLocaleTimeString() });
+    function addLog(category, text) {
+      restorationLog.push({
+        category,
+        text,
+        step: RESTORATION_STEPS[currentStepIndex]?.name || '系统',
+        time: new Date().toLocaleTimeString()
+      });
+    }
+
+    async function showLabReports() {
+      const reports = await ipcRenderer.invoke('get-lab-reports', currentTask.id);
+      
+      if (reports.length === 0) {
+        showModal(`
+          <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📄 检测报告</h2>
+          <p style="text-align: center; color: #a08060;">暂无检测报告</p>
+          <p style="text-align: center; margin-top: 15px;">前往检测室进行年代、材质、X光检测</p>
+          <div style="text-align: center; margin-top: 20px;">
+            <button class="btn" onclick="closeModal()">关闭</button>
+            <button class="btn btn-primary" onclick="goToLab()" style="margin-left: 10px;">前往检测室</button>
+          </div>
+        `);
+      } else {
+        showModal(`
+          <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📄 检测报告</h2>
+          <div style="max-height: 400px; overflow-y: auto;">
+            ${reports.map(r => `
+              <div class="card" style="background: rgba(0,0,0,0.2); margin-bottom: 15px;">
+                <h4 style="color: #d4af37; margin-bottom: 10px;">${r.type} - ${new Date(r.timestamp).toLocaleString()}</h4>
+                <pre style="font-size: 12px; white-space: pre-wrap; font-family: inherit;">${r.content}</pre>
+              </div>
+            `).join('')}
+          </div>
+          <div style="text-align: center; margin-top: 20px;">
+            <button class="btn" onclick="closeModal()">关闭</button>
+          </div>
+        `);
+      }
+    }
+
+    function goToLab() {
+      closeModal();
+      ipcRenderer.invoke('open-lab');
     }
 
     async function completeRestoration() {
       const quality = calculateQuality();
-      const result = await ipcRenderer.invoke('complete-task', currentTask, quality);
       
       showModal(`
         <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">🎉 修复完成！</h2>
@@ -588,32 +995,69 @@
           <h3>${currentTask.artifact.name}</h3>
         </div>
         <div style="margin-bottom: 20px;">
-          <p><strong>修复质量：</strong><span class="stars">${getQualityStars(quality)}</span></p>
-          <p><strong>获得奖励：</strong><span style="color: #d4af37;">💰 ${result.reward.toLocaleString()}</span></p>
-          <p><strong>获得声望：</strong><span style="color: #d4af37;">⭐ ${result.reputation}</span></p>
+          <p><strong>修复质量：</strong><span class="stars">${getQualityStars(quality)}</span> (${Math.round(quality * 100)}%)</p>
+          <p><strong>获得奖励：</strong><span style="color: #d4af37;">💰 ${Math.floor(currentTask.baseReward * quality).toLocaleString()}</span></p>
+          <p><strong>获得声望：</strong><span style="color: #d4af37;">⭐ ${Math.floor(currentTask.reputation * quality)}</span></p>
+        </div>
+        <div style="margin-bottom: 20px;">
+          <h4 style="color: #d4af37; margin-bottom: 10px;">📋 修复日志</h4>
+          <div style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+            ${restorationLog.map(log => `
+              <div style="font-size: 12px; margin-bottom: 5px; padding: 5px; border-bottom: 1px solid #333;">
+                <span style="color: #888;">[${log.time}]</span>
+                <span style="color: #d4af37;">[${log.step}]</span>
+                <span style="color: ${log.category === '⚠️ 突发' ? '#f44336' : '#e8d5b7'};">${log.category}:</span>
+                ${log.text}
+              </div>
+            `).join('')}
+          </div>
         </div>
         <div style="text-align: center;">
-          <button class="btn btn-primary" onclick="closeModalAndReload()">确定</button>
+          <button class="btn btn-primary" onclick="confirmComplete(${quality})">确认并领取奖励</button>
         </div>
       `);
     }
 
     function calculateQuality() {
-      let score = 0.5;
+      let score = 0.4;
+      
       const foundCount = damageSpots.filter(s => s.found).length;
-      score += (foundCount / damageSpots.length) * 0.15;
+      score += (foundCount / damageSpots.length) * 0.1;
       
       const cleanedCount = damageSpots.filter(s => s.cleaned).length;
-      score += (cleanedCount / damageSpots.length) * 0.15;
+      const foundCleanable = damageSpots.filter(s => s.found).length;
+      if (foundCleanable > 0) {
+        score += (cleanedCount / foundCleanable) * 0.1;
+      }
+      
+      const correctPieces = puzzlePieces.filter(p => p.placed && p.correctPos === p.currentPos).length;
+      if (puzzlePieces.length > 0) {
+        score += (correctPieces / puzzlePieces.length) * 0.1;
+      }
       
       const completedSteps = Object.keys(stepsProgress).length;
-      score += (completedSteps / RESTORATION_STEPS.length) * 0.2;
+      score += (completedSteps / RESTORATION_STEPS.length) * 0.15;
+      
+      score += forceQualityModifier * 0.1;
+      
+      score -= emergencyPenalty;
       
       return Math.min(1, Math.max(0.3, score));
     }
 
+    async function confirmComplete(quality) {
+      const result = await ipcRenderer.invoke('complete-task', currentTask, quality, restorationLog);
+      closeModal();
+      showNotification(`修复完成！获得 💰${result.reward.toLocaleString()} ⭐${result.reputation}`);
+      
+      setTimeout(() => {
+        ipcRenderer.invoke('refresh-all-windows');
+        location.reload();
+      }, 1500);
+    }
+
     function cancelTask() {
-      if (confirm('确定要放弃当前任务吗？')) {
+      if (confirm('确定要放弃当前任务吗？已消耗的材料无法退还。')) {
         currentTask = null;
         ipcRenderer.invoke('set-current-task', null);
         location.reload();
@@ -632,18 +1076,21 @@
     function showModal(content) {
       const modal = document.createElement('div');
       modal.className = 'modal';
+      modal.id = 'currentModal';
       modal.innerHTML = `<div class="modal-content">${content}</div>`;
       modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
       document.body.appendChild(modal);
     }
 
-    function closeModalAndReload() {
-      document.querySelector('.modal')?.remove();
-      ipcRenderer.invoke('refresh-all-windows');
-      location.reload();
+    function closeModal() {
+      document.getElementById('currentModal')?.remove();
     }
 
     init();
+    setInterval(async () => {
+      gameState = await getGameState();
+      updateStatus();
+    }, 2000);
   </script>
 </body>
 </html>

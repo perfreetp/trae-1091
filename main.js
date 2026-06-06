@@ -21,7 +21,12 @@ let gameState = {
     filler: 5,
     pigment: 12,
     varnish: 6,
-    solvent: 4
+    solvent: 4,
+    strongCleaner: 0,
+    strongAdhesive: 0,
+    colorVarnish: 0,
+    paintRemover: 0,
+    softFiller: 0
   },
   tools: {
     softBrush: { unlocked: true, level: 1 },
@@ -37,7 +42,8 @@ let gameState = {
     visitorFeedback: [],
     rating: 0
   },
-  collection: []
+  collection: [],
+  labReports: {}
 };
 
 function createMainMenu() {
@@ -81,9 +87,9 @@ ipcMain.handle('update-reputation', (_, amount) => {
 ipcMain.handle('use-material', (_, material, amount) => {
   if (gameState.materials[material] >= amount) {
     gameState.materials[material] -= amount;
-    return { success: true, remaining: gameState.materials[material] };
+    return { success: true, remaining: gameState.materials[material], materials: gameState.materials };
   }
-  return { success: false, remaining: gameState.materials[material] };
+  return { success: false, remaining: gameState.materials[material], materials: gameState.materials };
 });
 ipcMain.handle('buy-material', (_, material, amount, cost) => {
   if (gameState.budget >= cost) {
@@ -93,6 +99,15 @@ ipcMain.handle('buy-material', (_, material, amount, cost) => {
   }
   return { success: false, budget: gameState.budget };
 });
+ipcMain.handle('mix-materials', (_, ingredient1, ingredient2, resultKey) => {
+  if (gameState.materials[ingredient1] < 1 || gameState.materials[ingredient2] < 1) {
+    return { success: false, message: '原料不足' };
+  }
+  gameState.materials[ingredient1] -= 1;
+  gameState.materials[ingredient2] -= 1;
+  gameState.materials[resultKey] = (gameState.materials[resultKey] || 0) + 1;
+  return { success: true, materials: gameState.materials };
+});
 ipcMain.handle('unlock-tool', (_, tool, cost) => {
   if (gameState.budget >= cost && !gameState.tools[tool].unlocked) {
     gameState.budget -= cost;
@@ -100,22 +115,42 @@ ipcMain.handle('unlock-tool', (_, tool, cost) => {
     gameState.tools[tool].level = 1;
     return { success: true, budget: gameState.budget, tools: gameState.tools };
   }
-  return { success: false };
+  return { success: false, budget: gameState.budget, tools: gameState.tools };
 });
-ipcMain.handle('complete-task', (_, task, quality) => {
+ipcMain.handle('complete-task', (_, task, quality, restorationLog) => {
   const reward = Math.floor(task.baseReward * quality);
   gameState.budget += reward;
   gameState.reputation += Math.floor(task.reputation * quality);
-  gameState.completedTasks.push({ ...task, quality, completedAt: Date.now() });
+  const completedTask = { 
+    ...task, 
+    quality, 
+    completedAt: Date.now(), 
+    restorationLog: restorationLog || [],
+    labReports: gameState.labReports[task.id] || []
+  };
+  gameState.completedTasks.push(completedTask);
   if (!gameState.collection.find(c => c.id === task.artifact.id)) {
     gameState.collection.push(task.artifact);
   }
+  if (gameState.labReports[task.id]) {
+    delete gameState.labReports[task.id];
+  }
   gameState.currentTask = null;
-  return { reward, reputation: Math.floor(task.reputation * quality), gameState };
+  return { reward, reputation: Math.floor(task.reputation * quality), gameState, completedTask };
 });
 ipcMain.handle('set-current-task', (_, task) => {
   gameState.currentTask = task;
   return true;
+});
+ipcMain.handle('add-lab-report', (_, taskId, report) => {
+  if (!gameState.labReports[taskId]) {
+    gameState.labReports[taskId] = [];
+  }
+  gameState.labReports[taskId].push({ ...report, timestamp: Date.now() });
+  return { success: true, reports: gameState.labReports[taskId] };
+});
+ipcMain.handle('get-lab-reports', (_, taskId) => {
+  return gameState.labReports[taskId] || [];
 });
 ipcMain.handle('add-feedback', (_, feedback) => {
   gameState.exhibition.visitorFeedback.push(feedback);
@@ -134,7 +169,7 @@ ipcMain.handle('train-apprentice', (_, apprenticeId, skill, cost) => {
     }
     return { success: true, budget: gameState.budget, apprentices: gameState.apprentices };
   }
-  return { success: false };
+  return { success: false, budget: gameState.budget };
 });
 ipcMain.handle('exhibit-item', (_, artifact, position) => {
   const existing = gameState.exhibition.items.find(e => e.position === position);

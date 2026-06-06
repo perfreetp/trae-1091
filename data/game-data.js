@@ -147,12 +147,33 @@ const TASKS = [
 ];
 
 const MATERIALS_INFO = {
-  cleaningSolution: { name: '清洁剂', price: 200, unit: '瓶', description: '专业文物表面清洁剂' },
-  adhesive: { name: '粘合剂', price: 350, unit: '支', description: '可逆性文物专用粘合剂' },
-  filler: { name: '填充剂', price: 280, unit: '盒', description: '矿物填充材料' },
-  pigment: { name: '矿物颜料', price: 180, unit: '套', description: '传统矿物颜料' },
-  varnish: { name: '保护漆', price: 420, unit: '瓶', description: '文物保护层涂料' },
-  solvent: { name: '溶剂', price: 150, unit: '瓶', description: '有机溶剂' }
+  cleaningSolution: { name: '清洁剂', price: 200, unit: '瓶', description: '专业文物表面清洁剂', category: 'base' },
+  adhesive: { name: '粘合剂', price: 350, unit: '支', description: '可逆性文物专用粘合剂', category: 'base' },
+  filler: { name: '填充剂', price: 280, unit: '盒', description: '矿物填充材料', category: 'base' },
+  pigment: { name: '矿物颜料', price: 180, unit: '套', description: '传统矿物颜料', category: 'base' },
+  varnish: { name: '保护漆', price: 420, unit: '瓶', description: '文物保护层涂料', category: 'base' },
+  solvent: { name: '溶剂', price: 150, unit: '瓶', description: '有机溶剂', category: 'base' },
+  strongCleaner: { name: '强力清洁剂', price: 0, unit: '份', description: '清洁效率+20%，适合顽固污渍', category: 'mixed' },
+  strongAdhesive: { name: '高强度粘合剂', price: 0, unit: '份', description: '拼接强度+30%，适合承重部位', category: 'mixed' },
+  colorVarnish: { name: '彩色保护漆', price: 0, unit: '份', description: '上色持久度+25%，增加光泽', category: 'mixed' },
+  paintRemover: { name: '颜料清除剂', price: 0, unit: '份', description: '可去除错误上色', category: 'mixed' },
+  softFiller: { name: '柔性填充剂', price: 0, unit: '份', description: '适用于脆弱材质，降低损伤风险', category: 'mixed' }
+};
+
+const MIX_RECIPES = [
+  { ingredients: ['cleaningSolution', 'solvent'], resultKey: 'strongCleaner', resultName: '强力清洁剂', effect: '清洁效率+20%' },
+  { ingredients: ['adhesive', 'filler'], resultKey: 'strongAdhesive', resultName: '高强度粘合剂', effect: '拼接强度+30%' },
+  { ingredients: ['pigment', 'varnish'], resultKey: 'colorVarnish', resultName: '彩色保护漆', effect: '上色持久度+25%' },
+  { ingredients: ['cleaningSolution', 'pigment'], resultKey: 'paintRemover', resultName: '颜料清除剂', effect: '去除错误上色' },
+  { ingredients: ['filler', 'solvent'], resultKey: 'softFiller', resultName: '柔性填充剂', effect: '适用于脆弱材质' }
+];
+
+const STEP_MATERIAL_COST = {
+  clean: { material: 'cleaningSolution', amount: 1, alt: 'strongCleaner' },
+  assemble: { material: 'adhesive', amount: 1, alt: 'strongAdhesive' },
+  fill: { material: 'filler', amount: 1, alt: 'softFiller' },
+  color: { material: 'pigment', amount: 1, alt: null },
+  protect: { material: 'varnish', amount: 1, alt: 'colorVarnish' }
 };
 
 const TOOLS_INFO = {
@@ -229,4 +250,12 @@ function getQualityStars(quality) {
   if (quality >= 0.6) return '★★★☆☆';
   if (quality >= 0.4) return '★★☆☆☆';
   return '★☆☆☆☆';
+}
+
+function getMixRecipes() {
+  return MIX_RECIPES;
+}
+
+function getStepMaterialCost() {
+  return STEP_MATERIAL_COST;
 }
