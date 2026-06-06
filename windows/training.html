@@ -30,6 +30,7 @@
     <div id="myApprenticesTab">
       <div class="card">
         <div class="card-title">👥 我的学徒</div>
+        <div id="currentTaskInfo" style="margin-bottom: 15px; padding: 10px; background: rgba(212,175,55,0.1); border-radius: 6px;"></div>
         <div id="myApprenticesList"></div>
       </div>
     </div>
@@ -79,10 +80,68 @@
     async function init() {
       gameState = await getGameState();
       updateStatus();
+      renderCurrentTaskInfo();
       renderMyApprentices();
       renderRecruitList();
       renderTrainingSelect();
       renderCourseList();
+    }
+
+    function renderCurrentTaskInfo() {
+      const container = document.getElementById('currentTaskInfo');
+      const currentTask = gameState.currentTask;
+      const assignedApprentice = gameState.assignedApprentice;
+      
+      if (!currentTask) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center; margin: 0;">暂无进行中的修复任务</p>';
+        return;
+      }
+      
+      let html = `
+        <p style="margin-bottom: 8px;"><strong>当前任务：</strong>${currentTask.title} (${currentTask.artifact.name})</p>
+      `;
+      
+      if (assignedApprentice) {
+        html += `
+          <p style="margin-bottom: 5px;"><strong>已分配学徒：</strong>${assignedApprentice.name}</p>
+          <p style="font-size: 12px; color: #4caf50; margin: 0;">
+            ✅ 技能加成：清洁容错 +${assignedApprentice.skills.cleaning * 5}% · 拼接精度 +${assignedApprentice.skills.assembly * 3}% · 耗材节省 ${assignedApprentice.skills.analysis * 2}%
+          </p>
+          <button class="btn" style="margin-top: 8px; padding: 3px 10px; font-size: 11px;" onclick="unassignApprentice()">取消分配</button>
+        `;
+      } else {
+        html += '<p style="font-size: 12px; color: #a08060; margin: 0;">💡 分配一名学徒可以提升修复效率和质量</p>';
+      }
+      
+      container.innerHTML = html;
+    }
+
+    async function assignApprentice(apprenticeId) {
+      if (!gameState.currentTask) {
+        showNotification('没有进行中的任务！', 'error');
+        return;
+      }
+      
+      const apprentice = gameState.apprentices.find(a => a.id === apprenticeId);
+      if (!apprentice) return;
+      
+      gameState.assignedApprentice = apprentice;
+      await saveGameState(gameState);
+      await ipcRenderer.invoke('refresh-all-windows');
+      
+      renderCurrentTaskInfo();
+      renderMyApprentices();
+      showNotification(`已分配 ${apprentice.name} 协助当前任务`);
+    }
+
+    async function unassignApprentice() {
+      gameState.assignedApprentice = null;
+      await saveGameState(gameState);
+      await ipcRenderer.invoke('refresh-all-windows');
+      
+      renderCurrentTaskInfo();
+      renderMyApprentices();
+      showNotification('已取消学徒分配');
     }
 
     function updateStatus() {
@@ -102,27 +161,35 @@
     function renderMyApprentices() {
       const container = document.getElementById('myApprenticesList');
       const apprentices = gameState.apprentices;
+      const assignedId = gameState.assignedApprentice?.id;
       
       if (apprentices.length === 0) {
         container.innerHTML = '<p style="color: #a08060; text-align: center; padding: 30px;">还没有学徒，去招聘页面看看吧！</p>';
         return;
       }
 
-      container.innerHTML = apprentices.map(app => `
-        <div class="apprentice-card">
+      container.innerHTML = apprentices.map(app => {
+        const isAssigned = assignedId === app.id;
+        return `
+        <div class="apprentice-card" style="${isAssigned ? 'border-color: #4caf50; background: rgba(76,175,80,0.05);' : ''}">
           <div class="apprentice-header">
             <div style="display: flex; align-items: center; gap: 15px;">
               <div style="font-size: 48px;">👨‍🔧</div>
               <div>
-                <h3 class="apprentice-name">${app.name}</h3>
+                <h3 class="apprentice-name">${app.name} ${isAssigned ? '<span style="font-size: 12px; color: #4caf50;">(协助中)</span>' : ''}</h3>
                 <div style="margin-top: 5px;">
                   ${app.traits.map(t => `<span class="tag tag-era">${t}</span>`).join('')}
+                  ${app.experience ? `<span class="tag tag-difficulty">经验 ${app.experience}</span>` : ''}
                 </div>
               </div>
             </div>
             <div style="text-align: right;">
               <p style="color: #d4af37;">月薪：💰 ${app.salary.toLocaleString()}</p>
-              <button class="btn btn-danger" style="padding: 5px 15px; font-size: 12px; margin-top: 5px;" onclick="fireApprentice('${app.id}')">解雇</button>
+              <div style="display: flex; gap: 5px; justify-content: flex-end; margin-top: 5px;">
+                ${gameState.currentTask && !isAssigned ? 
+                  `<button class="btn btn-primary" style="padding: 5px 12px; font-size: 12px;" onclick="assignApprentice('${app.id}')">分配协助</button>` : ''}
+                <button class="btn btn-danger" style="padding: 5px 12px; font-size: 12px;" onclick="fireApprentice('${app.id}')">解雇</button>
+              </div>
             </div>
           </div>
           <div class="apprentice-skills" style="margin-top: 15px;">
@@ -147,9 +214,16 @@
               </div>
               <div style="font-size: 11px; color: #a08060; margin-top: 2px;">Lv.${app.skills.analysis || 1}</div>
             </div>
+            <div class="skill-bar">
+              <div class="skill-name">上色</div>
+              <div class="skill-level">
+                <div class="skill-fill" style="width: ${(app.skills.painting || 1) * 20}%"></div>
+              </div>
+              <div style="font-size: 11px; color: #a08060; margin-top: 2px;">Lv.${app.skills.painting || 1}</div>
+            </div>
           </div>
         </div>
-      `).join('');
+      `}).join('');
     }
 
     function renderRecruitList() {

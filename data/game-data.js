@@ -1,5 +1,48 @@
 const { ipcRenderer } = require('electron');
 
+const MATERIAL_DISEASES = {
+  '青铜': {
+    microTypes: ['粉状锈斑点', '铭文磨损痕迹', '青铜病初期', '表面氧化层', '铸造残留痕迹'],
+    xrayTypes: ['内部砂眼', '合金成分不均', '隐藏补铸痕迹', '内部裂隙'],
+    labFocus: '合金成分分析、锈蚀层检测、铸造工艺研究'
+  },
+  '铜': {
+    microTypes: ['红斑绿锈', '文字磨损', '边缘铸痕', '流通磨损痕迹', '土沁斑点'],
+    xrayTypes: ['内部气孔', '厚薄不均', '夹渣缺陷'],
+    labFocus: '金属成分、铸造年代、锈蚀产物分析'
+  },
+  '瓷器': {
+    microTypes: ['釉面开片细节', '气泡结构', '冲线延伸痕迹', '胎釉结合处', '青花钴料沉淀'],
+    xrayTypes: ['胎体内部裂纹', '釉层厚度不均', '修补痕迹', '接胎痕迹'],
+    labFocus: '胎釉成分、烧造温度、年代测定'
+  },
+  '和田玉': {
+    microTypes: ['玉质纹理', '绺裂内部结构', '沁色渗透层', '加工痕迹', '表面抛光痕迹'],
+    xrayTypes: ['内部绺裂', '玉质包裹体', '密度不均', '人工处理痕迹'],
+    labFocus: '矿物成分、沁色年代、产地区分'
+  },
+  '陶器': {
+    microTypes: ['胎体颗粒', '彩绘层剥落', '烧结程度', '制作痕迹', '土沁深入'],
+    xrayTypes: ['胎体裂隙', '烧制缺陷', '内部夹心'],
+    labFocus: '烧制温度、胎土来源、彩绘成分'
+  },
+  '漆器': {
+    microTypes: ['漆层开裂走向', '髹漆层次', '纹饰细节', '漆皮起翘', '胎漆分离'],
+    xrayTypes: ['胎体变形', '漆层厚度', '内部木胎状况'],
+    labFocus: '漆层年代、髹漆工艺、胎体材质'
+  },
+  '绢本设色': {
+    microTypes: ['纤维断裂', '颜料颗粒', '绢丝纹理', '墨色渗透', '虫蛀痕迹'],
+    xrayTypes: ['托纸层数', '隐藏补缀', '重层壁画结构'],
+    labFocus: '绢丝材质、颜料成分、装裱年代'
+  },
+  '化石': {
+    microTypes: ['蛋壳气孔', '石化结晶', '骨质结构', '矿物交代痕迹', '围岩侵入'],
+    xrayTypes: ['内部胚胎痕迹', '骨骼结构', '化石完整度'],
+    labFocus: '年代测定、物种鉴定、石化程度'
+  }
+};
+
 const ARTIFACTS = [
   {
     id: 'bronze_ding_01',
@@ -9,7 +52,13 @@ const ARTIFACTS = [
     rarity: 4,
     description: '商代晚期青铜礼器，鼎身饰有饕餮纹，是研究商代祭祀文化的重要实物。',
     damage: ['锈迹严重', '足部残缺', '铭文模糊'],
-    image: '🏺'
+    image: '🏺',
+    diseaseProfile: {
+      microCount: 4,
+      hiddenCount: 2,
+      primaryRisk: '青铜病扩散',
+      keyFeatures: ['饕餮纹细部', '族徽铭文', '足部铸接痕']
+    }
   },
   {
     id: 'porcelain_vase_01',
@@ -19,7 +68,13 @@ const ARTIFACTS = [
     rarity: 5,
     description: '明永乐年间官窑出品，青花发色纯正，纹饰繁复精美，器型端庄大气。',
     damage: ['口沿破碎', '釉面剥落', '冲线三道'],
-    image: '🏺'
+    image: '🏺',
+    diseaseProfile: {
+      microCount: 5,
+      hiddenCount: 2,
+      primaryRisk: '冲线继续延伸',
+      keyFeatures: ['青花苏麻离青特征', '釉面气泡', '胎釉结合线']
+    }
   },
   {
     id: 'jade_bi_01',
@@ -29,7 +84,13 @@ const ARTIFACTS = [
     rarity: 4,
     description: '战国时期贵族陪葬玉器，玉质温润，雕工精细，谷纹排列整齐。',
     damage: ['表面沁蚀', '边缘崩缺', '绺裂一道'],
-    image: '⭕'
+    image: '⭕',
+    diseaseProfile: {
+      microCount: 4,
+      hiddenCount: 1,
+      primaryRisk: '绺裂加深',
+      keyFeatures: ['谷纹砣工痕迹', '沁色层次', '玉质包浆']
+    }
   },
   {
     id: 'scroll_painting_01',
@@ -39,7 +100,13 @@ const ARTIFACTS = [
     rarity: 5,
     description: '南宋画家作品，意境深远，笔墨精妙，是难得的书画珍品。',
     damage: ['画心开裂', '污渍多处', '装裱脱落'],
-    image: '🖼️'
+    image: '🖼️',
+    diseaseProfile: {
+      microCount: 5,
+      hiddenCount: 2,
+      primaryRisk: '绢丝继续脆化',
+      keyFeatures: ['绢丝纹理', '墨色层次', '作者落款细节']
+    }
   },
   {
     id: 'terracotta_01',
@@ -49,7 +116,13 @@ const ARTIFACTS = [
     rarity: 3,
     description: '唐三彩女立俑，造型生动，色彩虽有褪失但仍可见当年风华。',
     damage: ['头部断裂', '色彩剥落', '底座残缺'],
-    image: '🗿'
+    image: '🗿',
+    diseaseProfile: {
+      microCount: 3,
+      hiddenCount: 1,
+      primaryRisk: '胎体继续酥粉',
+      keyFeatures: ['三彩釉流淌痕迹', '陶胎颗粒', '制作指纹痕']
+    }
   },
   {
     id: 'lacquer_ware_01',
@@ -59,7 +132,13 @@ const ARTIFACTS = [
     rarity: 4,
     description: '元代剔红工艺精品，雕漆层次分明，花卉图案栩栩如生。',
     damage: ['漆层开裂', '边角磕碰', '胎体暴露'],
-    image: '📦'
+    image: '📦',
+    diseaseProfile: {
+      microCount: 4,
+      hiddenCount: 2,
+      primaryRisk: '漆层继续起翘',
+      keyFeatures: ['雕漆刀痕', '髹漆层次', '漆皮老化状态']
+    }
   },
   {
     id: 'coin_01',
@@ -69,7 +148,13 @@ const ARTIFACTS = [
     rarity: 2,
     description: '秦统一货币后铸行的半两钱，见证了中国货币史的重要时刻。',
     damage: ['锈蚀严重', '文字不清', '边缘磨损'],
-    image: '🪙'
+    image: '🪙',
+    diseaseProfile: {
+      microCount: 3,
+      hiddenCount: 0,
+      primaryRisk: '锈蚀进一步腐蚀文字',
+      keyFeatures: ['文字篆法', '铸造浇口痕', '内外郭细节']
+    }
   },
   {
     id: 'fossil_01',
@@ -79,7 +164,13 @@ const ARTIFACTS = [
     rarity: 5,
     description: '罕见的完整恐龙蛋化石，对研究古生物和地质变迁具有极高科学价值。',
     damage: ['蛋壳碎裂', '石化不完全', '表面风化'],
-    image: '🥚'
+    image: '🥚',
+    diseaseProfile: {
+      microCount: 5,
+      hiddenCount: 3,
+      primaryRisk: '蛋壳进一步碎裂',
+      keyFeatures: ['蛋壳气孔结构', '石化结晶纹理', '胚胎痕迹']
+    }
   }
 ];
 
@@ -258,4 +349,22 @@ function getMixRecipes() {
 
 function getStepMaterialCost() {
   return STEP_MATERIAL_COST;
+}
+
+function getMaterialDiseases() {
+  return MATERIAL_DISEASES;
+}
+
+function getMicroDetailsForMaterial(material, count = 3) {
+  const diseases = MATERIAL_DISEASES[material];
+  if (!diseases) return [];
+  const shuffled = [...diseases.microTypes].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+function getXrayDetailsForMaterial(material, count = 2) {
+  const diseases = MATERIAL_DISEASES[material];
+  if (!diseases) return [];
+  const shuffled = [...diseases.xrayTypes].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
 }

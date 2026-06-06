@@ -37,6 +37,7 @@ let gameState = {
     xrayMachine: { unlocked: false, level: 0 }
   },
   apprentices: [],
+  assignedApprentice: null,
   exhibition: {
     items: [],
     visitorFeedback: [],
@@ -117,7 +118,7 @@ ipcMain.handle('unlock-tool', (_, tool, cost) => {
   }
   return { success: false, budget: gameState.budget, tools: gameState.tools };
 });
-ipcMain.handle('complete-task', (_, task, quality, restorationLog) => {
+ipcMain.handle('complete-task', (_, task, quality, restorationLog, extraData) => {
   const reward = Math.floor(task.baseReward * quality);
   gameState.budget += reward;
   gameState.reputation += Math.floor(task.reputation * quality);
@@ -126,16 +127,35 @@ ipcMain.handle('complete-task', (_, task, quality, restorationLog) => {
     quality, 
     completedAt: Date.now(), 
     restorationLog: restorationLog || [],
-    labReports: gameState.labReports[task.id] || []
+    labReports: gameState.labReports[task.id] || [],
+    stepRatings: extraData?.stepRatings || {},
+    toolBonus: extraData?.toolBonus || {},
+    forceStats: extraData?.forceStats || {},
+    emergencyPenalty: extraData?.emergencyPenalty || 0,
+    observeDetails: extraData?.observeDetails || [],
+    apprenticeContribution: extraData?.apprenticeContribution || null
   };
   gameState.completedTasks.push(completedTask);
-  if (!gameState.collection.find(c => c.id === task.artifact.id)) {
-    gameState.collection.push(task.artifact);
+  const artifactWithQuality = { ...task.artifact, restorationQuality: quality };
+  const existingIdx = gameState.collection.findIndex(c => c.id === task.artifact.id);
+  if (existingIdx >= 0) {
+    gameState.collection[existingIdx] = artifactWithQuality;
+  } else {
+    gameState.collection.push(artifactWithQuality);
   }
+  
+  if (extraData?.apprenticeContribution) {
+    const appIdx = gameState.apprentices.findIndex(a => a.id === extraData.apprenticeContribution.apprenticeId);
+    if (appIdx >= 0) {
+      gameState.apprentices[appIdx].experience = (gameState.apprentices[appIdx].experience || 0) + extraData.apprenticeContribution.expGained;
+    }
+  }
+  
   if (gameState.labReports[task.id]) {
     delete gameState.labReports[task.id];
   }
   gameState.currentTask = null;
+  gameState.assignedApprentice = null;
   return { reward, reputation: Math.floor(task.reputation * quality), gameState, completedTask };
 });
 ipcMain.handle('set-current-task', (_, task) => {
@@ -185,13 +205,18 @@ ipcMain.handle('remove-exhibit', (_, position) => {
   gameState.exhibition.rating = calculateExhibitionRating();
   return { success: true, exhibition: gameState.exhibition };
 });
+ipcMain.handle('update-exhibition-rating', (_, rating) => {
+  gameState.exhibition.rating = rating;
+  return { success: true, exhibition: gameState.exhibition };
+});
 
 function calculateExhibitionRating() {
   const items = gameState.exhibition.items;
   if (items.length === 0) return 0;
   const avgRarity = items.reduce((sum, e) => sum + (e.artifact.rarity || 1), 0) / items.length;
   const variety = [...new Set(items.map(e => e.artifact.era))].length;
-  return Math.min(5, Math.floor(avgRarity * 0.6 + variety * 0.4));
+  const avgQuality = items.reduce((sum, e) => sum + (e.artifact.restorationQuality || 0.7), 0) / items.length;
+  return Math.min(5, Math.floor(avgRarity * 0.3 + variety * 0.3 + avgQuality * 5 * 0.4));
 }
 
 ipcMain.handle('open-restoration', () => {

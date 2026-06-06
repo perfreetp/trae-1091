@@ -79,18 +79,34 @@
     let selectedArtifact = null;
     const SHOWCASE_POSITIONS = 8;
 
-    const FEEDBACK_TEMPLATES = [
-      { text: '这些文物太精美了！真是大开眼界！', rating: 5 },
-      { text: '青铜器的纹饰真漂亮，古人太厉害了！', rating: 5 },
-      { text: '希望能看到更多不同朝代的文物', rating: 4 },
-      { text: '展柜布置得很有艺术感', rating: 5 },
-      { text: '讲解员的介绍很专业', rating: 4 },
-      { text: '如果有更多互动体验就好了', rating: 3 },
-      { text: '灯光效果很棒，很有氛围感', rating: 5 },
-      { text: '种类有点单一，期待更多展品', rating: 3 },
-      { text: '不虚此行！强烈推荐！', rating: 5 },
-      { text: '带孩子来的，学到了很多知识', rating: 4 }
-    ];
+    const FEEDBACK_TEMPLATES = {
+      highQuality: [
+        '这个{name}修复得太棒了！完全看不出修复痕迹！',
+        '{name}的细节保存得太完美了，专业！',
+        '被{name}深深震撼，博物馆修复师太强了！',
+        '{name}的光泽和纹理都恢复得恰到好处',
+        '看到{name}让我感受到了历史的温度，修复得真好！'
+      ],
+      mediumQuality: [
+        '{name}挺有意思的，整体还不错',
+        '{name}能看出一点修复痕迹，但不影响观赏',
+        '{name}的展示效果一般，还行吧',
+        '{name}值得一看，希望能更精致些'
+      ],
+      lowQuality: [
+        '{name}的修复痕迹有点明显，有点遗憾',
+        '感觉{name}还有提升空间，细节处理不够',
+        '{name}的色泽不太自然，希望能改进',
+        '{name}看起来修复得比较粗糙'
+      ],
+      general: [
+        '这些文物太精美了！真是大开眼界！',
+        '展柜布置得很有艺术感',
+        '灯光效果很棒，很有氛围感',
+        '不虚此行！强烈推荐！',
+        '带孩子来的，学到了很多知识'
+      ]
+    };
 
     async function init() {
       gameState = await getGameState();
@@ -236,24 +252,65 @@
       }
 
       const visitorCount = Math.floor(Math.random() * 20) + 5;
-      const feedbackCount = Math.floor(visitorCount * 0.3);
+      const feedbackCount = Math.floor(visitorCount * 0.4);
+      
+      let totalRatingBoost = 0;
+      const items = gameState.exhibition.items;
       
       for (let i = 0; i < feedbackCount; i++) {
-        const template = FEEDBACK_TEMPLATES[Math.floor(Math.random() * FEEDBACK_TEMPLATES.length)];
-        const feedback = {
-          text: template.text,
-          rating: template.rating + (Math.random() > 0.7 ? 1 : 0) - (Math.random() > 0.8 ? 1 : 0),
-          time: new Date().toLocaleTimeString()
-        };
-        feedback.rating = Math.max(1, Math.min(5, feedback.rating));
+        let feedback;
+        
+        if (Math.random() < 0.6 && items.length > 0) {
+          const randomItem = items[Math.floor(Math.random() * items.length)];
+          const quality = randomItem.artifact.restorationQuality || 0.7;
+          
+          let templateList, baseRating;
+          if (quality >= 0.85) {
+            templateList = FEEDBACK_TEMPLATES.highQuality;
+            baseRating = 5;
+            totalRatingBoost += 1;
+          } else if (quality >= 0.6) {
+            templateList = FEEDBACK_TEMPLATES.mediumQuality;
+            baseRating = 4;
+          } else {
+            templateList = FEEDBACK_TEMPLATES.lowQuality;
+            baseRating = 2;
+            totalRatingBoost -= 1;
+          }
+          
+          const template = templateList[Math.floor(Math.random() * templateList.length)];
+          const text = template.replace('{name}', randomItem.artifact.name);
+          
+          feedback = {
+            text,
+            rating: Math.max(1, Math.min(5, baseRating + (Math.random() > 0.5 ? 0 : -1))),
+            time: new Date().toLocaleTimeString(),
+            artifactId: randomItem.artifact.id
+          };
+        } else {
+          const template = FEEDBACK_TEMPLATES.general[Math.floor(Math.random() * FEEDBACK_TEMPLATES.general.length)];
+          feedback = {
+            text: template,
+            rating: 4 + Math.floor(Math.random() * 2),
+            time: new Date().toLocaleTimeString()
+          };
+        }
+        
         await ipcRenderer.invoke('add-feedback', feedback);
         gameState.exhibition.visitorFeedback.push(feedback);
       }
 
-      document.getElementById('visitors').textContent = 
-        parseInt(document.getElementById('visitors').textContent) + visitorCount;
+      const currentVisitors = parseInt(document.getElementById('visitors').textContent) + visitorCount;
+      document.getElementById('visitors').textContent = currentVisitors;
+      
+      const avgQuality = items.length > 0 
+        ? items.reduce((sum, e) => sum + (e.artifact.restorationQuality || 0.7), 0) / items.length 
+        : 0.7;
+      const exhibitionRating = Math.min(5, Math.max(1, Math.round(avgQuality * 5)));
+      await ipcRenderer.invoke('update-exhibition-rating', exhibitionRating);
 
       renderFeedback();
+      renderShowcases();
       showNotification(`迎来 ${visitorCount} 位观众，收到 ${feedbackCount} 条评价！`);
     }
 

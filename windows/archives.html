@@ -45,6 +45,34 @@
     <div id="completedTab" style="display: none;">
       <div class="card">
         <div class="card-title">✅ 修复记录</div>
+        <div id="filterBar" style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+            <span style="font-size: 12px; color: #a08060;">筛选：</span>
+            <select id="filterEra" style="padding: 4px 8px; background: #2a2a2a; color: #e8d5b7; border: 1px solid #444; border-radius: 4px; font-size: 12px;" onchange="applyFilters()">
+              <option value="">全部年代</option>
+            </select>
+            <select id="filterMaterial" style="padding: 4px 8px; background: #2a2a2a; color: #e8d5b7; border: 1px solid #444; border-radius: 4px; font-size: 12px;" onchange="applyFilters()">
+              <option value="">全部材质</option>
+            </select>
+            <select id="filterQuality" style="padding: 4px 8px; background: #2a2a2a; color: #e8d5b7; border: 1px solid #444; border-radius: 4px; font-size: 12px;" onchange="applyFilters()">
+              <option value="">全部质量</option>
+              <option value="5">★★★★★ 极品</option>
+              <option value="4">★★★★ 优秀</option>
+              <option value="3">★★★ 良好</option>
+              <option value="2">★★ 一般</option>
+              <option value="1">★ 较差</option>
+            </select>
+            <select id="filterTool" style="padding: 4px 8px; background: #2a2a2a; color: #e8d5b7; border: 1px solid #444; border-radius: 4px; font-size: 12px;" onchange="applyFilters()">
+              <option value="">全部工具</option>
+              <option value="microscope">使用显微镜</option>
+              <option value="laser">使用激光清洗</option>
+              <option value="xray">使用X光</option>
+              <option value="uv">使用UV固化</option>
+              <option value="none">仅基础工具</option>
+            </select>
+            <button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="resetFilters()">重置</button>
+          </div>
+        </div>
         <div id="completedTasks"></div>
       </div>
     </div>
@@ -57,13 +85,79 @@
     const { ipcRenderer } = require('electron');
     let gameState = null;
     let acceptedTasks = [];
+    let currentFilters = {
+      era: '',
+      material: '',
+      quality: '',
+      tool: ''
+    };
 
     async function init() {
       gameState = await getGameState();
       updateStatus();
+      initFilterOptions();
       renderAvailableTasks();
       renderCurrentTask();
       renderCompletedTasks();
+    }
+
+    function initFilterOptions() {
+      const eras = [...new Set(gameState.completedTasks.map(t => t.artifact.era))];
+      const materials = [...new Set(gameState.completedTasks.map(t => t.artifact.material))];
+      
+      const eraSelect = document.getElementById('filterEra');
+      const matSelect = document.getElementById('filterMaterial');
+      
+      eras.forEach(era => {
+        eraSelect.innerHTML += `<option value="${era}">${era}</option>`;
+      });
+      materials.forEach(mat => {
+        matSelect.innerHTML += `<option value="${mat}">${mat}</option>`;
+      });
+    }
+
+    function applyFilters() {
+      currentFilters.era = document.getElementById('filterEra').value;
+      currentFilters.material = document.getElementById('filterMaterial').value;
+      currentFilters.quality = document.getElementById('filterQuality').value;
+      currentFilters.tool = document.getElementById('filterTool').value;
+      renderCompletedTasks();
+    }
+
+    function resetFilters() {
+      document.getElementById('filterEra').value = '';
+      document.getElementById('filterMaterial').value = '';
+      document.getElementById('filterQuality').value = '';
+      document.getElementById('filterTool').value = '';
+      currentFilters = { era: '', material: '', quality: '', tool: '' };
+      renderCompletedTasks();
+    }
+
+    function filterTasks(tasks) {
+      return tasks.filter(task => {
+        if (currentFilters.era && task.artifact.era !== currentFilters.era) return false;
+        if (currentFilters.material && task.artifact.material !== currentFilters.material) return false;
+        
+        if (currentFilters.quality) {
+          const q = parseInt(currentFilters.quality);
+          if (q === 5 && task.quality < 0.9) return false;
+          if (q === 4 && (task.quality < 0.75 || task.quality >= 0.9)) return false;
+          if (q === 3 && (task.quality < 0.6 || task.quality >= 0.75)) return false;
+          if (q === 2 && (task.quality < 0.4 || task.quality >= 0.6)) return false;
+          if (q === 1 && task.quality >= 0.4) return false;
+        }
+        
+        if (currentFilters.tool) {
+          const tb = task.toolBonus || {};
+          if (currentFilters.tool === 'microscope' && !tb.microscopeUsed) return false;
+          if (currentFilters.tool === 'laser' && !tb.laserUsed) return false;
+          if (currentFilters.tool === 'xray' && !tb.xrayUsed) return false;
+          if (currentFilters.tool === 'uv' && !tb.uvUsed) return false;
+          if (currentFilters.tool === 'none' && (tb.microscopeUsed || tb.laserUsed || tb.xrayUsed || tb.uvUsed)) return false;
+        }
+        
+        return true;
+      });
     }
 
     function updateStatus() {
@@ -232,31 +326,44 @@
 
     function renderCompletedTasks() {
       const container = document.getElementById('completedTasks');
-      const completed = gameState.completedTasks;
+      const filtered = filterTasks(gameState.completedTasks);
       
-      if (completed.length === 0) {
-        container.innerHTML = '<p style="color: #a08060; text-align: center;">暂无完成记录</p>';
+      if (filtered.length === 0) {
+        container.innerHTML = '<p style="color: #a08060; text-align: center;">暂无符合条件的修复记录</p>';
         return;
       }
 
-      container.innerHTML = completed.map((task, idx) => `
+      container.innerHTML = filtered.map((task, displayIdx) => {
+        const realIdx = gameState.completedTasks.indexOf(task);
+        const tb = task.toolBonus || {};
+        const toolUsed = [];
+        if (tb.microscopeUsed) toolUsed.push('🔬');
+        if (tb.xrayUsed) toolUsed.push('📷');
+        if (tb.laserUsed) toolUsed.push('💫');
+        if (tb.uvUsed) toolUsed.push('💡');
+        
+        return `
         <div class="list-item" style="padding: 15px;">
           <div style="display: flex; gap: 15px; flex: 1;">
             <span style="font-size: 48px;">${task.artifact.image}</span>
             <div style="flex: 1;">
-              <h4 style="color: #d4af37; margin-bottom: 5px;">${task.title}</h4>
+              <h4 style="color: #d4af37; margin-bottom: 5px;">
+                ${task.title}
+                ${toolUsed.length > 0 ? `<span style="margin-left: 8px; font-size: 14px;">${toolUsed.join(' ')}</span>` : ''}
+              </h4>
               <p style="font-size: 12px; color: #a08060; margin-bottom: 8px;">
                 ${task.artifact.era} · ${task.artifact.material} · ${task.client}
               </p>
-              <div class="stars" style="margin-bottom: 5px;">修复质量：${getQualityStars(task.quality)}</div>
+              <div class="stars" style="margin-bottom: 5px;">修复质量：${getQualityStars(task.quality)} (${Math.round(task.quality * 100)}%)</div>
               <p style="font-size: 12px; color: #a08060;">
                 完成时间：${new Date(task.completedAt).toLocaleString()}
               </p>
-              <div style="margin-top: 8px; display: flex; gap: 8px;">
+              <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewDetailedReview(${realIdx})">📊 详细复盘</button>
                 ${task.restorationLog && task.restorationLog.length > 0 ? 
-                  `<button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewRestorationLog(${idx})">📋 修复日志</button>` : ''}
+                  `<button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewRestorationLog(${realIdx})">📋 修复日志</button>` : ''}
                 ${task.labReports && task.labReports.length > 0 ? 
-                  `<button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewTaskReports(${idx})">📄 检测报告</button>` : ''}
+                  `<button class="btn" style="padding: 3px 10px; font-size: 11px;" onclick="viewTaskReports(${realIdx})">📄 检测报告</button>` : ''}
               </div>
             </div>
           </div>
@@ -265,7 +372,111 @@
             <p style="color: #4caf50; font-size: 12px;">声望 +${Math.floor(task.reputation * task.quality)}</p>
           </div>
         </div>
-      `).join('');
+      `}).join('');
+    }
+
+    function viewDetailedReview(idx) {
+      const task = gameState.completedTasks[idx];
+      const stepNames = { observe: '观察充分度', clean: '清洁策略', assemble: '拼合精度', fill: '补配效果', color: '上色匹配', protect: '封护稳定性' };
+      const tb = task.toolBonus || {};
+      const fs = task.forceStats || {};
+      const sr = task.stepRatings || {};
+      
+      let forceGrade = '一般';
+      if (fs.totalActions > 0) {
+        const perfectRate = fs.perfectCount / fs.totalActions;
+        if (perfectRate >= 0.7) forceGrade = '优秀';
+        else if (perfectRate >= 0.4) forceGrade = '良好';
+      }
+      
+      let html = `
+        <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">📊 修复复盘 - ${task.title}</h2>
+        
+        <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+          <div style="flex: 1; text-align: center;">
+            <div style="font-size: 60px;">${task.artifact.image}</div>
+            <p style="color: #a08060;">${task.artifact.era} · ${task.artifact.material}</p>
+          </div>
+          <div style="flex: 2;">
+            <p><strong>最终评级：</strong><span class="stars">${getQualityStars(task.quality)}</span> (${Math.round(task.quality * 100)}%)</p>
+            <p><strong>获得奖励：</strong><span style="color: #d4af37;">💰 ${Math.floor(task.baseReward * task.quality).toLocaleString()}</span></p>
+            <p><strong>获得声望：</strong><span style="color: #4caf50;">⭐ ${Math.floor(task.reputation * task.quality)}</span></p>
+            <p><strong>完成时间：</strong>${new Date(task.completedAt).toLocaleString()}</p>
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+          <h4 style="color: #d4af37; margin-bottom: 10px;">📈 阶段评分</h4>
+          ${Object.keys(sr).length > 0 ? Object.keys(sr).map(stepId => {
+            const r = sr[stepId];
+            if (!r || r.maxScore === 0) return '';
+            const pct = Math.round((r.score / r.maxScore) * 100);
+            return `
+              <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                  <span>${stepNames[stepId] || stepId}</span>
+                  <span style="color: ${pct >= 80 ? '#4caf50' : pct >= 60 ? '#ff9800' : '#f44336'};">${r.score}/${r.maxScore} (${pct}%)</span>
+                </div>
+                <div style="font-size: 11px; color: #a08060;">
+                  ${(r.details || []).map(d => `<div>• ${d}</div>`).join('')}
+                </div>
+              </div>
+            `;
+          }).join('') : '<p style="color: #a08060; font-size: 12px;">暂无详细阶段评分数据</p>'}
+        </div>
+        
+        <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+          <div style="flex: 1; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 6px;">
+            <p style="color: #4caf50; margin-bottom: 5px;"><strong>🛠️ 高级工具使用</strong></p>
+            <p style="font-size: 12px;">
+              ${tb.microscopeUsed ? '🔬 显微镜<br>' : ''}
+              ${tb.xrayUsed ? '📷 X光透视<br>' : ''}
+              ${tb.laserUsed ? '💫 激光清洗<br>' : ''}
+              ${tb.uvUsed ? '💡 UV固化<br>' : ''}
+              ${!tb.microscopeUsed && !tb.xrayUsed && !tb.laserUsed && !tb.uvUsed ? '仅使用基础工具' : ''}
+            </p>
+          </div>
+          <div style="flex: 1; padding: 10px; background: rgba(212,175,55,0.1); border-radius: 6px;">
+            <p style="color: #d4af37; margin-bottom: 5px;"><strong>⚡ 力度控制</strong></p>
+            <p style="font-size: 12px;">
+              评级：${forceGrade}<br>
+              完美 ${fs.perfectCount || 0} 次<br>
+              过轻 ${fs.tooLightCount || 0} 次<br>
+              过重 ${fs.tooHeavyCount || 0} 次
+            </p>
+          </div>
+          <div style="flex: 1; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 6px;">
+            <p style="color: #f44336; margin-bottom: 5px;"><strong>⚠️ 突发事件</strong></p>
+            <p style="font-size: 12px;">
+              惩罚：-${Math.round((task.emergencyPenalty || 0) * 100)}%<br>
+              ${(task.observeDetails || []).length > 0 ? `微观发现：${task.observeDetails.length} 处` : ''}
+            </p>
+          </div>
+        </div>
+        
+        ${task.observeDetails && task.observeDetails.length > 0 ? `
+        <div style="margin-bottom: 20px; padding: 10px; background: rgba(255,215,0,0.1); border-radius: 6px;">
+          <p style="color: #ffd700; margin-bottom: 5px;"><strong>🔬 显微镜发现</strong></p>
+          <p style="font-size: 12px;">${task.observeDetails.join('、')}</p>
+        </div>
+        ` : ''}
+        
+        ${task.apprenticeContribution ? `
+        <div style="margin-bottom: 20px; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 6px;">
+          <p style="color: #4caf50; margin-bottom: 5px;"><strong>👨‍🔧 学徒贡献</strong></p>
+          <p style="font-size: 12px;">
+            ${task.apprenticeContribution.apprenticeName} 协助完成<br>
+            获得经验：+${task.apprenticeContribution.expGained}
+          </p>
+        </div>
+        ` : ''}
+        
+        <div style="text-align: center;">
+          <button class="btn" onclick="closeModal()">关闭</button>
+        </div>
+      `;
+      
+      showModal(html);
     }
 
     function viewRestorationLog(idx) {

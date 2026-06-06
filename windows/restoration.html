@@ -138,6 +138,8 @@
     };
     let observeDetails = [];
     let cleanEfficiency = 1;
+    let stepRatings = {};
+    let assignedApprentice = null;
 
     const RESTORATION_STEPS = [
       { id: 'observe', name: '观察', icon: '👁️', desc: '仔细观察文物，记录破损情况', consume: null },
@@ -305,6 +307,20 @@
       };
       observeDetails = [];
       cleanEfficiency = 1;
+      window.microSpotsGenerated = false;
+      window.xraySpotsGenerated = false;
+      stepRatings = {
+        observe: { score: 0, maxScore: 20, details: [] },
+        clean: { score: 0, maxScore: 20, details: [] },
+        assemble: { score: 0, maxScore: 15, details: [] },
+        fill: { score: 0, maxScore: 15, details: [] },
+        color: { score: 0, maxScore: 15, details: [] },
+        protect: { score: 0, maxScore: 15, details: [] }
+      };
+      assignedApprentice = gameState.assignedApprentice || null;
+      if (assignedApprentice) {
+        addLog('系统', `学徒 ${assignedApprentice.name} 已就位协助修复`);
+      }
       await ipcRenderer.invoke('set-current-task', task);
       loadTask(task);
       addLog('系统', '开始修复任务：' + task.title);
@@ -323,6 +339,17 @@
 
     function renderArtifactInfo(artifact) {
       const info = document.getElementById('artifactInfo');
+      let apprenticeHtml = '';
+      if (assignedApprentice) {
+        apprenticeHtml = `
+          <div style="margin-top: 10px; padding: 8px; background: rgba(76,175,80,0.1); border-radius: 6px;">
+            <p style="color: #4caf50; margin-bottom: 3px;"><strong>👨‍🔧 协助学徒：</strong>${assignedApprentice.name}</p>
+            <p style="font-size: 11px; color: #a08060; margin: 0;">
+              清洁容错 +${assignedApprentice.skills.cleaning * 5}% · 拼接精度 +${assignedApprentice.skills.assembly * 3}% · 耗材节省 ${assignedApprentice.skills.analysis * 2}%
+            </p>
+          </div>
+        `;
+      }
       info.innerHTML = `
         <div style="text-align: center; margin-bottom: 15px;">
           <div style="font-size: 72px;">${artifact.image}</div>
@@ -338,6 +365,7 @@
           <strong>破损情况：</strong>
           ${artifact.damage.map(d => `<span class="tag tag-damage">${d}</span>`).join('')}
         </div>
+        ${apprenticeHtml}
       `;
     }
 
@@ -573,58 +601,116 @@
     function renderObserveArea(area) {
       const useMicroscope = selectedTool === 'microscope';
       const useXray = selectedTool === 'xray';
+      const useMagnifier = selectedTool === 'magnifier' || !selectedTool;
       
       if (damageSpots.length === 0) {
-        damageSpots = generateDamageSpots(useXray ? 7 : 5, useMicroscope);
+        initDamageSpots();
+      }
+      
+      if (useMicroscope && !window.microSpotsGenerated) {
+        generateMicroSpots();
+        window.microSpotsGenerated = true;
+      }
+      
+      if (useXray && !window.xraySpotsGenerated) {
+        generateXraySpots();
+        window.xraySpotsGenerated = true;
       }
       
       let spotsHtml = damageSpots.map((spot, i) => {
-        const isVisible = !spot.hidden || useXray;
-        const size = useMicroscope ? 18 : 12;
+        let showSpot = true;
+        if (spot.type === 'micro' && !useMicroscope) showSpot = false;
+        if (spot.type === 'xray' && !useXray) showSpot = false;
+        if (spot.type === 'hidden' && !useXray) showSpot = false;
+        
+        const size = useMicroscope ? (spot.type === 'micro' ? 20 : 16) : 12;
+        const color = spot.type === 'micro' ? 'rgba(255,215,0,0.6)' : 
+                      spot.type === 'xray' ? 'rgba(100,200,255,0.6)' : 
+                      spot.type === 'hidden' ? 'rgba(255,100,100,0.5)' : 'rgba(139,69,19,0.6)';
+        
+        if (!showSpot) return '';
+        
         return `
         <div class="damage-spot ${spot.found ? 'cleaned' : ''}" 
              style="left: ${spot.x}%; top: ${spot.y}%; 
                     width: ${size}px; height: ${size}px;
-                    ${spot.hidden && !useXray ? 'opacity: 0.3; filter: blur(2px);' : ''}
-                    ${spot.microDetail && !useMicroscope ? 'display: none;' : ''}"
+                    background: ${spot.found ? 'rgba(46,125,50,0.4)' : color};
+                    ${spot.type === 'micro' ? 'border: 2px solid #ffd700;' : ''}
+                    ${spot.type === 'xray' ? 'border: 2px solid #64c8ff;' : ''}
+                    animation: ${spot.found ? 'none' : 'pulse 2s infinite'}"
              onclick="findDamage(${i})"
-             title="${!isVisible ? '需要X光设备' : spot.microDetail ? '显微镜下可见' : '点击观察'}">
+             title="${getSpotTitle(spot)}">
         </div>
       `}).join('');
       
-      const detailPanel = useMicroscope ? `
-        <div style="position: absolute; bottom: 10px; left: 10px; right: 10px; 
-                    background: rgba(0,0,0,0.8); padding: 10px; border-radius: 6px; font-size: 11px;">
-          <strong style="color: #4caf50;">🔬 显微镜模式</strong>
-          <p style="margin: 5px 0 0; color: #a08060;">放大倍率 40x，可观察细微纹理和微观损伤</p>
-          ${observeDetails.length > 0 ? `<p style="margin: 5px 0 0; color: #d4af37;">已发现细节：${observeDetails.join('、')}</p>` : ''}
-        </div>
-      ` : '';
+      let statusPanel = '';
+      if (useMicroscope) {
+        const microFound = damageSpots.filter(s => s.type === 'micro' && s.found).length;
+        const microTotal = damageSpots.filter(s => s.type === 'micro').length;
+        statusPanel = `
+          <div style="position: absolute; bottom: 10px; left: 10px; right: 10px; 
+                      background: rgba(0,0,0,0.85); padding: 12px; border-radius: 8px; font-size: 11px;
+                      border-left: 3px solid #4caf50;">
+            <strong style="color: #4caf50;">🔬 显微镜模式 - 放大 40x</strong>
+            <p style="margin: 5px 0; color: #a08060;">可观察：细微纹理、微观锈蚀、制作痕迹</p>
+            <p style="margin: 0; color: #ffd700;">微观发现：${microFound}/${microTotal} 处</p>
+          </div>
+        `;
+      } else if (useXray) {
+        const xrayFound = damageSpots.filter(s => s.type === 'xray' && s.found).length;
+        const xrayTotal = damageSpots.filter(s => s.type === 'xray' || s.type === 'hidden').length;
+        statusPanel = `
+          <div style="position: absolute; bottom: 10px; left: 10px; right: 10px; 
+                      background: rgba(0,50,80,0.85); padding: 12px; border-radius: 8px; font-size: 11px;
+                      border-left: 3px solid #64c8ff;">
+            <strong style="color: #64c8ff;">📷 X光透视模式</strong>
+            <p style="margin: 5px 0; color: #a08060;">可透视：内部结构、隐藏损伤、修补痕迹</p>
+            <p style="margin: 0; color: #64c8ff;">内部发现：${xrayFound}/${xrayTotal} 处</p>
+          </div>
+        `;
+      } else {
+        const normalFound = damageSpots.filter(s => s.type === 'normal' && s.found).length;
+        const normalTotal = damageSpots.filter(s => s.type === 'normal').length;
+        statusPanel = `
+          <div style="position: absolute; bottom: 10px; left: 10px; right: 10px; 
+                      background: rgba(0,0,0,0.7); padding: 10px; border-radius: 8px; font-size: 11px;">
+            <strong style="color: #e8d5b7;">🔍 放大镜观察</strong>
+            <p style="margin: 3px 0 0; color: #a08060;">
+              已发现：${normalFound}/${normalTotal} 处表面破损
+              ${gameState.tools.microscope?.unlocked ? ' | 切换显微镜发现更多细节' : ''}
+            </p>
+          </div>
+        `;
+      }
       
       area.innerHTML = `
         <div id="artifactDisplay" class="artifact-display zoom-${zoomLevel}" 
-             style="${useMicroscope ? 'filter: contrast(1.2) brightness(1.1);' : ''}">
+             style="${useMicroscope ? 'filter: contrast(1.3) brightness(1.15) saturate(1.1);' : 
+                    useXray ? 'filter: grayscale(0.3) brightness(1.1) hue-rotate(180deg);' : ''}">
           ${currentTask.artifact.image}
           <div class="damage-overlay">${spotsHtml}</div>
-          ${detailPanel}
+          ${statusPanel}
         </div>
       `;
       
       setTimeout(() => {
-        if (damageSpots.filter(s => s.found).length >= 3) {
+        const normalFound = damageSpots.filter(s => s.type === 'normal' && s.found).length;
+        if (normalFound >= 3) {
           if (!stepsProgress['observe']) {
             stepsProgress['observe'] = true;
-            const foundCount = damageSpots.filter(s => s.found).length;
-            const detailCount = damageSpots.filter(s => s.found && s.microDetail).length;
-            addLog('观察', `发现 ${foundCount} 处破损点${detailCount > 0 ? `，其中 ${detailCount} 处微观细节（显微镜发现）` : ''}`);
-            if (useMicroscope) {
+            const totalFound = damageSpots.filter(s => s.found).length;
+            const microFound = damageSpots.filter(s => s.found && s.type === 'micro').length;
+            const xrayFound = damageSpots.filter(s => s.found && (s.type === 'xray' || s.type === 'hidden')).length;
+            
+            addLog('观察', `表面发现 ${normalFound} 处破损${microFound > 0 ? `，显微镜发现 ${microFound} 处微观细节` : ''}${xrayFound > 0 ? `，X光发现 ${xrayFound} 处内部损伤` : ''}`);
+            
+            if (useMicroscope || microFound > 0) {
               toolBonus.microscopeUsed = true;
-              addLog('工具', '使用显微镜观察，获得精度加成');
             }
-            if (useXray) {
+            if (useXray || xrayFound > 0) {
               toolBonus.xrayUsed = true;
-              addLog('工具', '使用X光透视，发现内部损伤');
             }
+            
             updateProgress();
             loadStep(currentStepIndex);
           }
@@ -632,32 +718,93 @@
       }, 100);
     }
 
-    function generateDamageSpots(count, hasMicroscope) {
+    function getSpotTitle(spot) {
+      if (spot.found) return '已观察';
+      switch(spot.type) {
+        case 'micro': return `🔬 微观：${spot.detailName}`;
+        case 'xray': return `📷 内部：${spot.detailName}`;
+        case 'hidden': return `📷 隐藏损伤`;
+        default: return '点击观察';
+      }
+    }
+
+    function initDamageSpots() {
+      const profile = currentTask.artifact.diseaseProfile || { microCount: 3, hiddenCount: 1 };
       const spots = [];
-      const microDetails = ['表面划痕', '氧化斑点', '细微裂纹', '腐蚀痕迹', '修复残留'];
-      for (let i = 0; i < count; i++) {
+      
+      for (let i = 0; i < 5; i++) {
+        spots.push({
+          x: 15 + Math.random() * 70,
+          y: 15 + Math.random() * 70,
+          found: false,
+          cleaned: false,
+          type: 'normal',
+          detailName: null
+        });
+      }
+      
+      for (let i = 0; i < (profile.hiddenCount || 1); i++) {
         spots.push({
           x: 10 + Math.random() * 80,
           y: 10 + Math.random() * 80,
           found: false,
           cleaned: false,
-          hidden: i >= 5,
-          microDetail: hasMicroscope && i >= 3 && i < 5 ? microDetails[i - 3] : null
+          type: 'hidden',
+          detailName: '内部损伤'
         });
       }
-      return spots;
+      
+      damageSpots = spots;
+    }
+
+    function generateMicroSpots() {
+      const material = currentTask.artifact.material;
+      const microDetails = getMicroDetailsForMaterial(material, 4);
+      const profile = currentTask.artifact.diseaseProfile || {};
+      
+      microDetails.forEach((detail) => {
+        damageSpots.push({
+          x: 10 + Math.random() * 80,
+          y: 10 + Math.random() * 80,
+          found: false,
+          cleaned: false,
+          type: 'micro',
+          detailName: detail
+        });
+      });
+    }
+
+    function generateXraySpots() {
+      const material = currentTask.artifact.material;
+      const xrayDetails = getXrayDetailsForMaterial(material, 3);
+      
+      xrayDetails.forEach((detail) => {
+        damageSpots.push({
+          x: 15 + Math.random() * 70,
+          y: 15 + Math.random() * 70,
+          found: false,
+          cleaned: false,
+          type: 'xray',
+          detailName: detail
+        });
+      });
     }
 
     function findDamage(index) {
       const spot = damageSpots[index];
       
-      if (spot.hidden && selectedTool !== 'xray') {
-        showNotification('需要X光设备才能发现此隐藏损伤！', 'error');
+      if (spot.type === 'hidden' && selectedTool !== 'xray') {
+        showNotification('内部损伤需要X光设备才能观察！', 'error');
         return;
       }
       
-      if (spot.microDetail && selectedTool !== 'microscope' && !spot.found) {
-        showNotification('微观细节需要显微镜才能观察！', 'error');
+      if (spot.type === 'xray' && selectedTool !== 'xray') {
+        showNotification('内部结构需要X光透视！', 'error');
+        return;
+      }
+      
+      if (spot.type === 'micro' && selectedTool !== 'microscope') {
+        showNotification('微观细节需要显微镜才能观察！切换工具试试', 'error');
         return;
       }
       
@@ -666,14 +813,18 @@
         let msg = '发现破损点！';
         let logText = `发现破损点 #${index + 1}`;
         
-        if (spot.hidden) {
+        if (spot.type === 'hidden') {
           msg = '发现内部隐藏损伤！';
           logText += ' (X光透视发现)';
         }
-        if (spot.microDetail) {
-          msg = `发现微观细节：${spot.microDetail}！`;
-          logText += ` - ${spot.microDetail} (显微镜发现)`;
-          observeDetails.push(spot.microDetail);
+        if (spot.type === 'xray') {
+          msg = `透视发现：${spot.detailName}！`;
+          logText += ` - ${spot.detailName} (X光透视)`;
+        }
+        if (spot.type === 'micro') {
+          msg = `发现微观细节：${spot.detailName}！`;
+          logText += ` - ${spot.detailName} (显微镜发现)`;
+          observeDetails.push(spot.detailName);
         }
         
         showNotification(msg);
@@ -738,7 +889,7 @@
       
       if (damageSpots[index].cleaned) return;
       
-      const forceEffect = calculateForceEffect();
+      const forceEffect = calculateForceEffect('clean');
       forceStats.totalActions++;
       
       if (forceEffect.tooLight) {
@@ -793,23 +944,39 @@
       updateStatus();
     }
 
-    function calculateForceEffect() {
-      if (toolForce <= 2) {
+    function calculateForceEffect(stepId) {
+      const apprenticeBonus = assignedApprentice?.skills || {};
+      let faultTolerance = 0;
+      if (stepId === 'clean' && apprenticeBonus.cleaning) faultTolerance = apprenticeBonus.cleaning * 0.05;
+      if (stepId === 'assemble' && apprenticeBonus.assembly) faultTolerance = apprenticeBonus.assembly * 0.03;
+      
+      const adjustedForce = toolForce;
+      
+      if (adjustedForce <= 2) {
         return { risk: false, qualityDelta: -0.5, slow: true, tooLight: true, perfect: false, tooHeavy: false };
-      } else if (toolForce <= 4) {
-        return { risk: false, qualityDelta: 0.3, slow: false, tooLight: false, perfect: false, tooHeavy: false };
-      } else if (toolForce <= 6) {
-        return { risk: false, qualityDelta: 1, slow: false, tooLight: false, perfect: true, tooHeavy: false };
-      } else if (toolForce <= 8) {
-        return { risk: true, qualityDelta: 0.5, slow: false, tooLight: false, perfect: false, tooHeavy: false };
+      } else if (adjustedForce <= 4) {
+        return { risk: false, qualityDelta: 0.3 + faultTolerance, slow: false, tooLight: false, perfect: false, tooHeavy: false };
+      } else if (adjustedForce <= 6) {
+        return { risk: false, qualityDelta: 1 + faultTolerance, slow: false, tooLight: false, perfect: true, tooHeavy: false };
+      } else if (adjustedForce <= 8) {
+        const riskReduced = Math.random() < faultTolerance;
+        return { risk: !riskReduced, qualityDelta: 0.5 + faultTolerance, slow: false, tooLight: false, perfect: false, tooHeavy: false };
       } else {
-        return { risk: true, qualityDelta: -0.5, slow: false, tooLight: false, perfect: false, tooHeavy: true };
+        const riskReduced = Math.random() < faultTolerance * 0.5;
+        return { risk: !riskReduced, qualityDelta: -0.5 + faultTolerance, slow: false, tooLight: false, perfect: false, tooHeavy: true };
       }
     }
 
     function triggerEmergency(stepId) {
       const emergencies = EMERGENCY_TYPES[stepId];
       if (!emergencies || emergencies.length === 0) return;
+      
+      const apprenticeBonus = assignedApprentice?.skills || {};
+      let emergencyReduce = 0;
+      if (stepId === 'clean' && apprenticeBonus.cleaning) emergencyReduce = apprenticeBonus.cleaning * 0.1;
+      if (stepId === 'assemble' && apprenticeBonus.assembly) emergencyReduce = apprenticeBonus.assembly * 0.08;
+      
+      if (Math.random() < emergencyReduce) return;
       
       currentEmergency = emergencies[Math.floor(Math.random() * emergencies.length)];
       addLog('⚠️ 突发', currentEmergency.name + ' - ' + currentEmergency.desc);
@@ -909,7 +1076,7 @@
     let selectedPiece = null;
     async function selectPiece(id) {
       selectedPiece = id;
-      const forceEffect = calculateForceEffect();
+      const forceEffect = calculateForceEffect('assemble');
       
       if (forceEffect.tooLight) {
         showNotification('力度太轻，无法稳固拿起碎片！', 'error');
@@ -932,7 +1099,7 @@
         return;
       }
       
-      const forceEffect = calculateForceEffect();
+      const forceEffect = calculateForceEffect('assemble');
       forceStats.totalActions++;
       
       if (forceEffect.tooLight) {
@@ -993,7 +1160,7 @@
 
     async function applyFill() {
       const amount = parseInt(document.getElementById('fillAmount').value);
-      const forceEffect = calculateForceEffect();
+      const forceEffect = calculateForceEffect('fill');
       forceStats.totalActions++;
       
       if (forceEffect.tooLight) {
@@ -1062,7 +1229,7 @@
         return;
       }
       
-      const forceEffect = calculateForceEffect();
+      const forceEffect = calculateForceEffect('color');
       forceStats.totalActions++;
       
       if (forceEffect.tooLight) {
@@ -1115,7 +1282,7 @@
     }
 
     async function applyProtection() {
-      const forceEffect = calculateForceEffect();
+      const forceEffect = calculateForceEffect('protect');
       forceStats.totalActions++;
       
       if (forceEffect.tooLight) {
@@ -1230,16 +1397,42 @@
         else if (perfectRate >= 0.4) forceGrade = '良好';
       }
       
+      const stepNames = { observe: '观察充分度', clean: '清洁策略', assemble: '拼合精度', fill: '补配效果', color: '上色匹配', protect: '封护稳定性' };
+      
       showModal(`
         <h2 style="color: #d4af37; text-align: center; margin-bottom: 20px;">🎉 修复完成！</h2>
         <div style="text-align: center; margin-bottom: 20px;">
           <div style="font-size: 80px;">${currentTask.artifact.image}</div>
           <h3>${currentTask.artifact.name}</h3>
+          <p style="color: #a08060; font-size: 12px;">${currentTask.artifact.era} · ${currentTask.artifact.material}</p>
         </div>
         <div style="margin-bottom: 20px;">
           <p><strong>修复质量：</strong><span class="stars">${getQualityStars(quality)}</span> (${Math.round(quality * 100)}%)</p>
           <p><strong>获得奖励：</strong><span style="color: #d4af37;">💰 ${Math.floor(currentTask.baseReward * quality).toLocaleString()}</span></p>
           <p><strong>获得声望：</strong><span style="color: #d4af37;">⭐ ${Math.floor(currentTask.reputation * quality)}</span></p>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+          <h4 style="color: #d4af37; margin-bottom: 10px; cursor: pointer;" onclick="document.getElementById('ratingDetails').style.display = document.getElementById('ratingDetails').style.display === 'none' ? 'block' : 'none'">
+            📊 阶段评价（点击展开/收起）
+          </h4>
+          <div id="ratingDetails" style="display: none;">
+            ${Object.keys(stepRatings).map(stepId => {
+              const r = stepRatings[stepId];
+              const pct = Math.round((r.score / r.maxScore) * 100);
+              return `
+                <div style="margin-bottom: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <strong>${stepNames[stepId] || stepId}</strong>
+                    <span style="color: ${pct >= 80 ? '#4caf50' : pct >= 60 ? '#ff9800' : '#f44336'};">${r.score}/${r.maxScore} (${pct}%)</span>
+                  </div>
+                  <div style="font-size: 11px; color: #a08060;">
+                    ${r.details.map(d => `<div>• ${d}</div>`).join('')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
         </div>
         
         ${toolUsedList.length > 0 ? `
@@ -1284,78 +1477,161 @@
       `);
     }
 
-    function calculateQuality() {
-      let score = 0.35;
+    function calculateStepRatings() {
+      stepRatings.observe = { score: 0, maxScore: 20, details: [] };
+      stepRatings.clean = { score: 0, maxScore: 20, details: [] };
+      stepRatings.assemble = { score: 0, maxScore: 15, details: [] };
+      stepRatings.fill = { score: 0, maxScore: 15, details: [] };
+      stepRatings.color = { score: 0, maxScore: 15, details: [] };
+      stepRatings.protect = { score: 0, maxScore: 15, details: [] };
       
-      const foundCount = damageSpots.filter(s => s.found).length;
-      const totalSpots = damageSpots.length;
-      score += (foundCount / totalSpots) * 0.12;
+      const normalFound = damageSpots.filter(s => s.type === 'normal' && s.found).length;
+      const normalTotal = damageSpots.filter(s => s.type === 'normal').length;
+      const microFound = damageSpots.filter(s => s.type === 'micro' && s.found).length;
+      const microTotal = damageSpots.filter(s => s.type === 'micro').length;
+      const xrayFound = damageSpots.filter(s => (s.type === 'xray' || s.type === 'hidden') && s.found).length;
+      const xrayTotal = damageSpots.filter(s => s.type === 'xray' || s.type === 'hidden').length;
       
-      const microFound = damageSpots.filter(s => s.found && s.microDetail).length;
-      if (microFound > 0) {
-        score += 0.05;
-        addLog('评分', `显微镜发现 ${microFound} 处微观细节，评分 +5%`);
+      let observeScore = 0;
+      if (normalTotal > 0) observeScore += (normalFound / normalTotal) * 10;
+      stepRatings.observe.details.push(`表面破损发现：${normalFound}/${normalTotal} (+${Math.round((normalFound / normalTotal) * 10)}分)`);
+      
+      if (microTotal > 0) {
+        observeScore += (microFound / microTotal) * 6;
+        stepRatings.observe.details.push(`微观细节发现：${microFound}/${microTotal} (+${Math.round((microFound / microTotal) * 6)}分)`);
+      }
+      if (toolBonus.microscopeUsed && microFound > 0) {
+        observeScore += 2;
+        stepRatings.observe.details.push('使用显微镜观察 (+2分)');
       }
       
-      if (toolBonus.microscopeUsed) {
-        score += 0.03;
-        addLog('评分', '使用显微镜观察，精度加成 +3%');
+      if (xrayTotal > 0) {
+        observeScore += (xrayFound / xrayTotal) * 2;
+        stepRatings.observe.details.push(`内部损伤发现：${xrayFound}/${xrayTotal} (+${Math.round((xrayFound / xrayTotal) * 2)}分)`);
       }
-      if (toolBonus.xrayUsed) {
-        score += 0.03;
-        addLog('评分', '使用X光透视，发现内部损伤 +3%');
-      }
+      stepRatings.observe.score = Math.min(20, observeScore);
       
+      let cleanScore = 0;
       const cleanedCount = damageSpots.filter(s => s.cleaned).length;
-      const foundCleanable = damageSpots.filter(s => s.found).length;
-      if (foundCleanable > 0) {
-        score += (cleanedCount / foundCleanable) * 0.1;
-      }
+      const toClean = damageSpots.filter(s => s.found && s.type === 'normal').length;
+      if (toClean > 0) cleanScore += (cleanedCount / toClean) * 14;
+      stepRatings.clean.details.push(`污渍清洁完成：${cleanedCount}/${toClean} (+${Math.round((cleanedCount / toClean) * 14)}分)`);
       
       if (toolBonus.laserUsed) {
-        score += 0.04;
-        addLog('评分', '使用激光清洗机，高效无损 +4%');
+        cleanScore += 4;
+        stepRatings.clean.details.push('使用激光清洗机高效清洁 (+4分)');
       }
+      if (forceStats.totalActions > 0) {
+        const cleanPerfect = forceStats.perfectCount / forceStats.totalActions;
+        if (cleanPerfect >= 0.6) {
+          cleanScore += 2;
+          stepRatings.clean.details.push('力度控制优秀 (+2分)');
+        }
+      }
+      stepRatings.clean.score = Math.min(20, cleanScore);
       
+      let assembleScore = 0;
       const correctPieces = puzzlePieces.filter(p => p.placed && p.correctPos === p.currentPos).length;
       if (puzzlePieces.length > 0) {
-        score += (correctPieces / puzzlePieces.length) * 0.1;
+        assembleScore += (correctPieces / puzzlePieces.length) * 13;
+        stepRatings.assemble.details.push(`碎片正确定位：${correctPieces}/${puzzlePieces.length} (+${Math.round((correctPieces / puzzlePieces.length) * 13)}分)`);
       }
+      if (stepsProgress['assemble']) {
+        assembleScore += 2;
+        stepRatings.assemble.details.push('拼合步骤完成 (+2分)');
+      }
+      stepRatings.assemble.score = Math.min(15, assembleScore);
       
-      const completedSteps = Object.keys(stepsProgress).length;
-      score += (completedSteps / RESTORATION_STEPS.length) * 0.12;
+      let fillScore = 0;
+      if (stepsProgress['fill']) {
+        fillScore += 12;
+        stepRatings.fill.details.push('补配步骤完成 (+12分)');
+      }
+      if (toolForce >= 4 && toolForce <= 7) {
+        fillScore += 3;
+        stepRatings.fill.details.push('填充力度适中 (+3分)');
+      }
+      stepRatings.fill.score = Math.min(15, fillScore);
       
+      let colorScore = 0;
+      if (stepsProgress['color']) {
+        colorScore += 12;
+        stepRatings.color.details.push('上色步骤完成 (+12分)');
+      }
+      if (toolForce >= 4 && toolForce <= 6) {
+        colorScore += 3;
+        stepRatings.color.details.push('上色力度均匀 (+3分)');
+      }
+      stepRatings.color.score = Math.min(15, colorScore);
+      
+      let protectScore = 0;
+      if (stepsProgress['protect']) {
+        protectScore += 12;
+        stepRatings.protect.details.push('封护步骤完成 (+12分)');
+      }
       if (toolBonus.uvUsed) {
-        score += 0.02;
-        addLog('评分', '使用UV固化，封护质量 +2%');
+        protectScore += 3;
+        stepRatings.protect.details.push('使用UV固化设备 (+3分)');
+      }
+      stepRatings.protect.score = Math.min(15, protectScore);
+    }
+
+    function calculateQuality() {
+      calculateStepRatings();
+      
+      let totalScore = 0;
+      let maxScore = 0;
+      
+      for (const step in stepRatings) {
+        totalScore += stepRatings[step].score;
+        maxScore += stepRatings[step].maxScore;
       }
       
+      let bonusScore = 0;
       if (forceStats.totalActions > 0) {
         const perfectRate = forceStats.perfectCount / forceStats.totalActions;
-        const tooLightRate = forceStats.tooLightCount / forceStats.totalActions;
-        const tooHeavyRate = forceStats.tooHeavyCount / forceStats.totalActions;
-        
-        score += perfectRate * 0.08;
-        score -= tooLightRate * 0.05;
-        score -= tooHeavyRate * 0.03;
-        
-        addLog('评分', `力度控制：完美 ${Math.round(perfectRate * 100)}%，过轻 ${Math.round(tooLightRate * 100)}%，过重 ${Math.round(tooHeavyRate * 100)}%`);
+        if (perfectRate >= 0.7) bonusScore += 5;
+        else if (perfectRate >= 0.5) bonusScore += 3;
       }
       
-      score += (forceQualityModifier - 1) * 0.05;
+      totalScore -= emergencyPenalty * 100;
       
-      score -= emergencyPenalty;
-      if (emergencyPenalty > 0) {
-        addLog('评分', `突发事件惩罚：-${Math.round(emergencyPenalty * 100)}%`);
-      }
+      const quality = Math.min(1.1, Math.max(0.3, (totalScore + bonusScore) / maxScore));
       
-      return Math.min(1.1, Math.max(0.3, score));
+      addLog('评分', `阶段评分：观察 ${stepRatings.observe.score}/20、清洁 ${stepRatings.clean.score}/20、拼合 ${stepRatings.assemble.score}/15、补配 ${stepRatings.fill.score}/15、上色 ${stepRatings.color.score}/15、封护 ${stepRatings.protect.score}/15`);
+      addLog('评分', `总分：${Math.round(totalScore + bonusScore)}/${maxScore} = ${Math.round(quality * 100)}%`);
+      
+      return quality;
     }
 
     async function confirmComplete(quality) {
-      const result = await ipcRenderer.invoke('complete-task', currentTask, quality, restorationLog);
+      let apprenticeContribution = null;
+      if (assignedApprentice) {
+        const expGain = Math.floor(quality * 50);
+        apprenticeContribution = {
+          apprenticeId: assignedApprentice.id,
+          apprenticeName: assignedApprentice.name,
+          skills: { ...assignedApprentice.skills },
+          expGained: expGain
+        };
+      }
+      
+      const extraData = {
+        stepRatings,
+        toolBonus,
+        forceStats,
+        emergencyPenalty,
+        observeDetails,
+        apprenticeContribution
+      };
+      const result = await ipcRenderer.invoke('complete-task', currentTask, quality, restorationLog, extraData);
       closeModal();
-      showNotification(`修复完成！获得 💰${result.reward.toLocaleString()} ⭐${result.reputation}`);
+      
+      let msg = `修复完成！获得 💰${result.reward.toLocaleString()} ⭐${result.reputation}`;
+      if (apprenticeContribution) {
+        msg += `，学徒 ${apprenticeContribution.apprenticeName} 获得 ${apprenticeContribution.expGained} 经验`;
+      }
+      showNotification(msg);
       
       setTimeout(() => {
         ipcRenderer.invoke('refresh-all-windows');
